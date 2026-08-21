@@ -120,7 +120,7 @@ onMounted(load)
                 <Button variant="outline" size="sm" @click="copyText(curlCmd)"><Copy />复制</Button>
               </div>
               <p class="text-muted-foreground text-xs">在被控机器上以 root 执行上述指令，脚本会自动下载并启动 agent</p>
-              <p class="text-muted-foreground text-xs">本地被控一键脚本：<code>virtualis/deploy/install-agent.sh</code>（支持 Mock/QEMU/LXC/Incus 多选）或 <code>virtualis/deploy/install-linux.sh --agent</code></p>
+              <p class="text-muted-foreground text-xs">本地被控一键脚本（内置 5 选 1）：<code>virtualis-agent/install.sh</code>（1 仅Agent / 2 Incus+Agent / 3 LXC+Agent / 4 QEMU+Agent / 5 Mock+Agent）或 <code>virtualis/deploy/install-linux.sh --agent</code></p>
             </div>
           </div>
         </div>
