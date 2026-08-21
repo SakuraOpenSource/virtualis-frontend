@@ -147,15 +147,12 @@ onMounted(async () => { await load(); await loadMeta() })
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="mock">mock</SelectItem>
-                <SelectItem value="qemu">qemu</SelectItem>
-                <SelectItem value="lxc">lxc</SelectItem>
-                <SelectItem value="incus">incus</SelectItem>
-                <SelectItem value="kvm">kvm</SelectItem>
+                <SelectItem value="qemu" :disabled="!drivers.find(d=>d.name==='qemu')?.available" :class="!drivers.find(d=>d.name==='qemu')?.available ? 'text-muted-foreground' : ''">qemu{{ drivers.find(d=>d.name==='qemu')?.available ? '' : ' (不可用)' }}</SelectItem>
+                <SelectItem value="lxc" :disabled="!drivers.find(d=>d.name==='lxc')?.available" :class="!drivers.find(d=>d.name==='lxc')?.available ? 'text-muted-foreground' : ''">lxc{{ drivers.find(d=>d.name==='lxc')?.available ? '' : ' (不可用)' }}</SelectItem>
+                <SelectItem value="incus" :disabled="!drivers.find(d=>d.name==='incus')?.available" :class="!drivers.find(d=>d.name==='incus')?.available ? 'text-muted-foreground' : ''">incus{{ drivers.find(d=>d.name==='incus')?.available ? '' : ' (不可用)' }}</SelectItem>
+                <SelectItem value="auto">auto (自动选择可用)</SelectItem>
               </SelectContent>
             </Select>
-            <div v-if="drivers.length" class="text-xs text-muted-foreground">
-              可用驱动: <span v-for="d in drivers" :key="d.name" :class="['mr-2', d.available ? 'text-green-600' : 'text-muted-foreground']">{{ d.name }}{{ d.available ? '' : '(不可用)' }}</span>
-            </div>
           </div>
           <div class="grid grid-cols-3 gap-3">
             <div class="grid gap-2"><Label>CPU (核)</Label><Input :modelValue="String(formCpu)" @update:modelValue="(v:any)=> formCpu=parseInt(v)||1" type="number" /></div>

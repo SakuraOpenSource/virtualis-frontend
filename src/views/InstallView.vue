@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { siteApi } from '@/lib/endpoints'
 import { useSiteStore } from '@/stores/site'
@@ -23,6 +23,10 @@ const dbPort = ref(3306)
 const dbUser = ref('')
 const dbPass = ref('')
 const dbName = ref('virtualis')
+watch(dbDriver, (v) => {
+  if (v === 'postgres' && dbPort.value === 3306) dbPort.value = 5432
+  if (v === 'mysql' && dbPort.value === 5432) dbPort.value = 3306
+})
 const siteName = ref('Virtualis')
 const siteDesc = ref('')
 const adminUser = ref('admin')

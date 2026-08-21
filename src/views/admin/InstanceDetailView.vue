@@ -85,14 +85,23 @@ onMounted(async () => { await load(); await loadImages() })
       <Card>
         <CardHeader><CardTitle>电源操作</CardTitle></CardHeader>
         <CardContent class="space-y-4">
-          <div class="flex flex-wrap gap-2">
-            <Button size="sm" :disabled="!!actionLoading" @click="power('start')">{{ actionLoading==='start' ? '...' : '开机' }}</Button>
-            <Button size="sm" variant="outline" :disabled="!!actionLoading" @click="power('stop')">{{ actionLoading==='stop' ? '...' : '关机' }}</Button>
-            <Button size="sm" variant="outline" :disabled="!!actionLoading" @click="power('restart')">{{ actionLoading==='restart' ? '...' : '重启' }}</Button>
-            <Button size="sm" variant="secondary" :disabled="!!actionLoading" @click="power('hard_start')">{{ actionLoading==='hard_start' ? '...' : '强制开机' }}</Button>
-            <Button size="sm" variant="secondary" :disabled="!!actionLoading" @click="power('hard_stop')">{{ actionLoading==='hard_stop' ? '...' : '强制关机' }}</Button>
-            <Button size="sm" variant="secondary" :disabled="!!actionLoading" @click="power('hard_restart')">{{ actionLoading==='hard_restart' ? '...' : '强制重启' }}</Button>
-            <Button size="sm" variant="outline" :disabled="!!actionLoading" @click="refreshStatus">刷新状态</Button>
+          <div class="space-y-2">
+            <Label>选择操作</Label>
+            <div class="flex gap-2">
+              <Select :modelValue="''" @update:modelValue="(v:any)=> { if(v) power(v) }">
+                <SelectTrigger class="w-64"><SelectValue placeholder="选择电源操作" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="start" :disabled="inst?.status==='running'" :class="inst?.status==='running' ? 'text-muted-foreground' : ''">开机{{ inst?.status==='running' ? ' (已运行)' : '' }}</SelectItem>
+                  <SelectItem value="stop" :disabled="inst?.status!=='running'" :class="inst?.status!=='running' ? 'text-muted-foreground' : ''">关机{{ inst?.status!=='running' ? ' (未运行)' : '' }}</SelectItem>
+                  <SelectItem value="restart" :disabled="inst?.status!=='running'" :class="inst?.status!=='running' ? 'text-muted-foreground' : ''">重启</SelectItem>
+                  <SelectItem value="hard_start" :disabled="inst?.status==='running'" :class="inst?.status==='running' ? 'text-muted-foreground' : ''">强制开机</SelectItem>
+                  <SelectItem value="hard_stop" :disabled="inst?.status!=='running'" :class="inst?.status!=='running' ? 'text-muted-foreground' : ''">强制关机</SelectItem>
+                  <SelectItem value="hard_restart" :disabled="inst?.status!=='running'" :class="inst?.status!=='running' ? 'text-muted-foreground' : ''">强制重启</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button size="sm" variant="outline" :disabled="!!actionLoading" @click="refreshStatus">刷新状态</Button>
+            </div>
+            <p class="text-xs text-muted-foreground">不可用选项为灰色且无法选择</p>
           </div>
           <div class="flex gap-2 items-end">
             <div class="grid gap-1">
@@ -104,7 +113,7 @@ onMounted(async () => { await load(); await loadImages() })
                 </SelectContent>
               </Select>
             </div>
-            <Button variant="destructive" size="sm" :disabled="!!actionLoading" @click="power('reinstall')">重装</Button>
+            <Button variant="destructive" size="sm" :disabled="!!actionLoading || !reinstallImage" @click="power('reinstall')">重装</Button>
           </div>
           <div class="pt-2 border-t">
             <Button variant="destructive" size="sm" @click="del">删除实例</Button>

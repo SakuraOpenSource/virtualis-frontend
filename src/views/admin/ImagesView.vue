@@ -103,10 +103,9 @@ onMounted(load)
             <Select :modelValue="formDriver" @update:modelValue="(v:any)=> formDriver=v">
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
+                <SelectItem value="mock">mock</SelectItem>
                 <SelectItem value="qemu">qemu</SelectItem>
                 <SelectItem value="lxc">lxc</SelectItem>
-                <SelectItem value="kvm">kvm</SelectItem>
-                <SelectItem value="mock">mock</SelectItem>
                 <SelectItem value="incus">incus</SelectItem>
               </SelectContent>
             </Select>

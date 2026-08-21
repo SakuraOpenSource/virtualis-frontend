@@ -104,11 +104,11 @@ onMounted(loadAll)
               <Select :modelValue="vDriver" @update:modelValue="(v:any)=> vDriver=v">
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="auto">auto（自动选择可用）</SelectItem>
                   <SelectItem value="mock">mock</SelectItem>
                   <SelectItem value="qemu">qemu</SelectItem>
                   <SelectItem value="lxc">lxc</SelectItem>
                   <SelectItem value="incus">incus</SelectItem>
-                  <SelectItem value="kvm">kvm</SelectItem>
                 </SelectContent>
               </Select>
             </div>
