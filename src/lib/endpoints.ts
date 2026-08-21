@@ -1,0 +1,133 @@
+import { http } from './api'
+import type {
+  Bootstrap, CaptchaChallenge, CaptchaSettings, SiteSettings, VirtualisSettings,
+  Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver,
+  APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest
+} from './types'
+
+interface PageQuery { page?: number; page_size?: number }
+
+export const siteApi = {
+  async bootstrap() {
+    const { data } = await http.get<Bootstrap>('/bootstrap')
+    return data
+  },
+  async testDatabase(cfg: DatabaseConfig) {
+    const { data } = await http.post<{ ok: boolean }>('/install/test-db', cfg)
+    return data
+  },
+  async install(payload: InstallRequest) {
+    const { data } = await http.post<{ ok: boolean; user?: User }>('/install', payload)
+    return data
+  },
+}
+
+export const captchaApi = {
+  async issue() {
+    const { data } = await http.get<CaptchaChallenge>('/captcha')
+    return data
+  },
+}
+
+export interface CaptchaAnswer { captcha_id?: string; captcha_code?: string }
+
+export const authApi = {
+  async login(identifier: string, password: string, captcha: CaptchaAnswer = {}) {
+    const { data } = await http.post<{ user: User }>('/auth/login', { identifier, password, ...captcha })
+    return data.user
+  },
+  async logout() { await http.post('/auth/logout') },
+  async me() {
+    const { data } = await http.get<{ user: User }>('/me')
+    return data.user
+  },
+  async updateEmail(password: string, email: string) {
+    const { data } = await http.patch<{ user: User }>('/me/email', { password, email })
+    return data.user
+  },
+  async updatePassword(old_password: string, new_password: string) {
+    await http.post('/me/password', { old_password, new_password })
+  },
+}
+
+export const virtualisApi = {
+  async drivers() {
+    const { data } = await http.get<{ items: VirtualisDriver[] }>('/drivers')
+    return data.items ?? []
+  },
+  async instances(query: PageQuery = {}) {
+    const { data } = await http.get<Page<VirtualisInstance>>('/instances', { params: query })
+    return data
+  },
+  async instance(id: number) {
+    const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
+    return data
+  },
+  async createInstance(payload: { name: string; driver?: string; spec: { cpu: number; memory_mb: number; disk_gb: number }; image_id?: number | null }) {
+    const { data } = await http.post<VirtualisInstance>('/instances', payload)
+    return data
+  },
+  async deleteInstance(id: number) { await http.delete(`/instances/${id}`) },
+  async power(id: number, action: string, image_id?: number | null) {
+    const body: Record<string, unknown> = { action }
+    if (image_id != null) body.image_id = image_id
+    const { data } = await http.post<VirtualisInstance>(`/instances/${id}/power`, body)
+    return data
+  },
+  async status(id: number) {
+    const { data } = await http.get<VirtualisInstance>(`/instances/${id}/status`)
+    return data
+  },
+  async images() {
+    const { data } = await http.get<{ items: VirtualisImage[] | null }>('/images')
+    return data.items ?? []
+  },
+  async image(id: number) {
+    const { data } = await http.get<VirtualisImage>(`/images/${id}`)
+    return data
+  },
+  async createImage(payload: { name: string; driver: string; file_path: string; size?: number; checksum?: string }) {
+    const { data } = await http.post<VirtualisImage>('/images', payload)
+    return data
+  },
+  async deleteImage(id: number) { await http.delete(`/images/${id}`) },
+}
+
+export const apiKeyApi = {
+  async list() {
+    const { data } = await http.get<APIKeyList>('/api-keys')
+    return data
+  },
+  async create(payload: APIKeyInput) {
+    const { data } = await http.post<APIKeyCreated>('/api-keys', payload)
+    return data
+  },
+  async revoke(id: number) { await http.delete(`/api-keys/${id}`) },
+}
+
+export const adminApi = {
+  async site() {
+    const { data } = await http.get<SiteSettings>('/admin/settings')
+    return data
+  },
+  async updateSite(payload: SiteSettings) {
+    const { data } = await http.put<SiteSettings>('/admin/settings', payload)
+    return data
+  },
+  async virtualis() {
+    const { data } = await http.get<VirtualisSettings>('/admin/settings/virtualis')
+    return data
+  },
+  async updateVirtualis(payload: VirtualisSettings) {
+    const { data } = await http.put<VirtualisSettings>('/admin/settings/virtualis', payload)
+    return data
+  },
+  async captcha() {
+    const { data } = await http.get<CaptchaSettings>('/admin/settings/captcha')
+    return data
+  },
+  async updateCaptcha(payload: CaptchaSettings) {
+    const { data } = await http.put<CaptchaSettings>('/admin/settings/captcha', payload)
+    return data
+  },
+}
