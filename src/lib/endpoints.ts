@@ -122,6 +122,10 @@ export const agentApi = {
     const { data } = await http.post<{ agent: VirtualisAgent; token: string; join_cmd: string; curl_cmd: string; downloads: AgentDownload[] }>('/admin/agents', payload)
     return data
   },
+  async rotateToken(id: number) {
+    const { data } = await http.post<{ agent: VirtualisAgent; token: string; join_cmd: string; curl_cmd: string; downloads: AgentDownload[] }>(`/admin/agents/${id}/rotate-token`)
+    return data
+  },
   async remove(id: number) { await http.delete(`/admin/agents/${id}`) },
 }
 

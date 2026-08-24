@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { Copy, Plus, Trash2, Check, Download } from 'lucide-vue-next'
+import { Copy, Plus, Trash2, Check, Download, RefreshCw } from 'lucide-vue-next'
 
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
@@ -73,6 +73,19 @@ async function remove(id: number) {
   }
 }
 
+async function rotateToken(agent: VirtualisAgent) {
+  if (!confirm(`确认重新生成“${agent.display_name || agent.name}”的 token？旧 token 会立即失效。`)) return
+  try {
+    const data = await agentApi.rotateToken(agent.id)
+    joinCmd.value = data.join_cmd
+    curlCmd.value = data.curl_cmd
+    downloads.value = data.downloads ?? []
+    showCreate.value = true
+    toast.success('新 token 已生成，请重启该被控')
+    await load()
+  } catch (e) { toast.error(errorMessage(e)) }
+}
+
 async function copyText(value: string) {
   try {
     await navigator.clipboard.writeText(value)
@@ -118,7 +131,7 @@ onMounted(load)
                 <TableCell>{{ it.os || '-' }} / {{ it.arch || '-' }}</TableCell>
                 <TableCell><Badge :variant="it.status==='online'?'default':it.status==='offline'?'secondary':'outline'">{{ it.status }}</Badge></TableCell>
                 <TableCell class="text-muted-foreground text-xs">{{ it.version || '-' }}</TableCell>
-                <TableCell class="text-right"><Button variant="destructive" size="sm" @click="remove(it.id)"><Trash2 />删除</Button></TableCell>
+                <TableCell class="text-right"><div class="flex justify-end gap-2"><Button variant="outline" size="sm" @click="rotateToken(it)"><RefreshCw />重置 token</Button><Button variant="destructive" size="sm" @click="remove(it.id)"><Trash2 />删除</Button></div></TableCell>
               </TableRow>
             </TableBody>
           </Table>
