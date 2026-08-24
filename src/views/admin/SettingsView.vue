@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { adminApi } from '@/lib/endpoints'
+import { adminApi, virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import PageHeader from '@/components/app/PageHeader.vue'
@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
+import type { VirtualisDriver } from '@/lib/types'
 
 const toast = useToast()
 const loading = ref(false)
@@ -31,6 +32,19 @@ const vDisk = ref(20)
 const vArch = ref('x86_64')
 const vAllowReinstall = ref(true)
 const vAutoRefresh = ref(true)
+const drivers = ref<VirtualisDriver[]>([])
+
+const driverNames = ['auto', 'incus', 'qemu', 'lxc', 'mock']
+
+function driverAvailable(name: string) {
+  if (name === 'auto') return drivers.value.some((driver) => driver.available)
+  return drivers.value.find((driver) => driver.name === name)?.available === true
+}
+
+function driverLabel(name: string) {
+  if (!driverAvailable(name)) return `${name}（未安装）`
+  return name === 'auto' ? 'auto（自动选择可用）' : name
+}
 
 // captcha
 const capLogin = ref(false)
@@ -40,7 +54,7 @@ async function loadAll() {
   loading.value=true
   error.value=''
   try {
-    const [site, virt, cap] = await Promise.all([adminApi.site(), adminApi.virtualis(), adminApi.captcha()])
+    const [site, virt, cap, driverList] = await Promise.all([adminApi.site(), adminApi.virtualis(), adminApi.captcha(), virtualisApi.drivers()])
     siteName.value = site.name
     siteDesc.value = site.description
     vDriver.value = virt.default_driver
@@ -50,6 +64,7 @@ async function loadAll() {
     vArch.value = virt.default_arch
     vAllowReinstall.value = virt.allow_reinstall
     vAutoRefresh.value = virt.auto_refresh
+    drivers.value = driverList
     capLogin.value = cap.login_enabled
     capRegister.value = cap.register_enabled
   } catch (e) { error.value = errorMessage(e) } finally { loading.value=false }
@@ -101,16 +116,13 @@ onMounted(loadAll)
           <div class="grid grid-cols-2 gap-4">
             <div class="grid gap-2">
               <Label>默认驱动</Label>
-              <Select :modelValue="vDriver" @update:modelValue="(v:any)=> vDriver=v">
+              <Select v-model="vDriver">
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto">auto（自动选择可用）</SelectItem>
-                  <SelectItem value="mock">mock</SelectItem>
-                  <SelectItem value="qemu">qemu</SelectItem>
-                  <SelectItem value="lxc">lxc</SelectItem>
-                  <SelectItem value="incus">incus</SelectItem>
+                  <SelectItem v-for="name in driverNames" :key="name" :value="name" :disabled="!driverAvailable(name)" :class="!driverAvailable(name) ? 'text-muted-foreground' : ''">{{ driverLabel(name) }}</SelectItem>
                 </SelectContent>
               </Select>
+              <p class="text-xs text-muted-foreground">驱动安装在被控节点上，未安装的驱动不可选。</p>
             </div>
             <div class="grid gap-2">
               <Label>默认架构</Label>

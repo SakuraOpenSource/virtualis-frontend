@@ -74,16 +74,21 @@ export interface InstanceSpec {
   cpu: number
   memory_mb: number
   disk_gb: number
+  arch?: string
 }
 
 export interface VirtualisInstance {
   id: number
   name: string
+  display_name?: string
   driver: string
+  type: 'container' | 'vm' | string
   spec: InstanceSpec
   status: string
   image_id?: number | null
   image?: VirtualisImage | null
+  agent_id?: number | null
+  agent?: VirtualisAgent | null
   created_at: string
   updated_at: string
 }
@@ -91,10 +96,17 @@ export interface VirtualisInstance {
 export interface VirtualisImage {
   id: number
   name: string
+  display_name?: string
   driver: string
+  type: 'disk' | 'iso' | string
+  os_type?: string
+  os_version?: string
+  arch?: string
+  original_name?: string
+  mime_type?: string
   file_path: string
-  size: number
-  checksum: string
+  size_bytes: number
+  checksum?: string
   status: string
   created_at: string
   updated_at: string
@@ -104,6 +116,28 @@ export interface VirtualisDriver {
   name: string
   available: boolean
   error?: string
+}
+
+export interface VirtualisAgent {
+  id: number
+  name: string
+  display_name?: string
+  status: 'pending' | 'online' | 'offline' | string
+  ip: string
+  endpoint: string
+  driver: string
+  drivers: string[] | null
+  os?: string
+  arch?: string
+  version?: string
+  last_seen_at?: string | null
+  created_at: string
+}
+
+export interface AgentDownload {
+  os: string
+  arch: string
+  url: string
 }
 
 export type APIKeyStatus = 'active' | 'revoked'
@@ -132,8 +166,4 @@ export interface APIKeyCreated {
   secret: string
 }
 
-export interface APIKeyInput {
-  name: string
-  scopes: APIScope[]
-  expires_in_days: number
-}
+export interface APIKeyInput { name?: string }

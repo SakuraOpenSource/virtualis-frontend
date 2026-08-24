@@ -2,7 +2,7 @@ import { http } from './api'
 import type {
   Bootstrap, CaptchaChallenge, CaptchaSettings, SiteSettings, VirtualisSettings,
   Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver,
-  APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest
+  VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest
 } from './types'
 
 interface PageQuery { page?: number; page_size?: number }
@@ -63,7 +63,7 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
     return data
   },
-  async createInstance(payload: { name: string; driver?: string; spec: { cpu: number; memory_mb: number; disk_gb: number }; image_id?: number | null }) {
+  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; memory_mb: number; disk_gb: number; arch?: string }; image_id?: number | null }) {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
@@ -86,11 +86,31 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisImage>(`/images/${id}`)
     return data
   },
-  async createImage(payload: { name: string; driver: string; file_path: string; size?: number; checksum?: string }) {
+  async createImage(payload: { name: string; driver: string; type?: string; file_path: string; size_bytes?: number; checksum?: string }) {
     const { data } = await http.post<VirtualisImage>('/images', payload)
     return data
   },
+  async uploadImage(file: File, payload: { name?: string; driver: string; type: string; os_type?: string; os_version?: string; arch?: string }) {
+    const form = new FormData()
+    form.append('file', file)
+    for (const [key, value] of Object.entries(payload)) if (value != null) form.append(key, value)
+    const { data } = await http.post<VirtualisImage>('/images/upload', form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 0 })
+    return data
+  },
+  imageDownloadUrl(id: number) { return `/api/images/${id}/download` },
   async deleteImage(id: number) { await http.delete(`/images/${id}`) },
+}
+
+export const agentApi = {
+  async list() {
+    const { data } = await http.get<{ items: VirtualisAgent[] }>('/admin/agents')
+    return data.items ?? []
+  },
+  async create(payload: { name: string; display_name?: string }) {
+    const { data } = await http.post<{ agent: VirtualisAgent; token: string; join_cmd: string; curl_cmd: string; downloads: AgentDownload[] }>('/admin/agents', payload)
+    return data
+  },
+  async remove(id: number) { await http.delete(`/admin/agents/${id}`) },
 }
 
 export const apiKeyApi = {
@@ -98,7 +118,7 @@ export const apiKeyApi = {
     const { data } = await http.get<APIKeyList>('/api-keys')
     return data
   },
-  async create(payload: APIKeyInput) {
+  async create(payload: APIKeyInput = {}) {
     const { data } = await http.post<APIKeyCreated>('/api-keys', payload)
     return data
   },

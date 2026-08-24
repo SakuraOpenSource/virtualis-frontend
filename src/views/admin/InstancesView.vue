@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { virtualisApi } from '@/lib/endpoints'
+import { computed, onMounted, ref, watch } from 'vue'
+import { agentApi, virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
-import type { VirtualisInstance, VirtualisImage, VirtualisDriver } from '@/lib/types'
+import type { VirtualisAgent, VirtualisImage } from '@/lib/types'
+import type { VirtualisDriver, VirtualisInstance } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
@@ -27,16 +28,48 @@ const pageSize = ref(20)
 const showCreate = ref(false)
 const creating = ref(false)
 
-// create form
 const formName = ref('')
-const formDriver = ref('mock')
+const formAgentId = ref<string>('')
+const formDriver = ref('auto')
+const formType = ref<'container' | 'vm'>('container')
 const formCpu = ref(2)
 const formMem = ref(1024)
 const formDisk = ref(20)
+const formArch = ref('x86_64')
 const formImageId = ref<string>('')
 
+const agents = ref<VirtualisAgent[]>([])
 const drivers = ref<VirtualisDriver[]>([])
 const images = ref<VirtualisImage[]>([])
+
+const selectedAgent = computed(() => agents.value.find(a => String(a.id) === formAgentId.value) ?? null)
+
+const availableDriversForAgent = computed(() => {
+  if (!selectedAgent.value) return []
+  return (selectedAgent.value.drivers ?? []) as string[]
+})
+
+const driverItems = computed(() => {
+  const base: Array<{ value: string; label: string; disabled?: boolean; hint?: string }> = [
+    { value: 'auto', label: 'auto（自动选择该节点可用驱动）' },
+    { value: 'incus', label: 'incus' },
+    { value: 'qemu', label: 'qemu' },
+    { value: 'lxc', label: 'lxc' },
+    { value: 'mock', label: 'mock' },
+  ]
+  if (!selectedAgent.value) return base.map(b => ({ ...b, disabled: true, hint: '请先选择被控节点' }))
+  if (!availableDriversForAgent.value.length) return base.map(b => ({ ...b, disabled: b.value !== 'mock', hint: b.value === 'mock' ? undefined : '该节点未上报该驱动' }))
+  return base.map(item => {
+    if (item.value === 'auto') return { ...item, disabled: false }
+    const ok = availableDriversForAgent.value.includes(item.value)
+    return { ...item, disabled: !ok, hint: ok ? undefined : '未安装' }
+  })
+})
+
+const filteredImages = computed(() => {
+  if (!formDriver.value || formDriver.value === 'auto') return images.value
+  return images.value.filter(img => img.driver === formDriver.value || img.driver === 'auto')
+})
 
 async function load() {
   loading.value = true
@@ -51,19 +84,36 @@ async function load() {
 async function loadMeta() {
   try { drivers.value = await virtualisApi.drivers() } catch {}
   try { images.value = await virtualisApi.images() } catch {}
+  try { agents.value = await agentApi.list() } catch {}
 }
+
+watch(formAgentId, () => {
+  if (!formAgentId.value) { formDriver.value = 'auto'; return }
+  if (availableDriversForAgent.value.length && !availableDriversForAgent.value.includes(formDriver.value) && formDriver.value !== 'auto') {
+    formDriver.value = 'auto'
+  }
+})
+
+watch(filteredImages, () => {
+  if (formImageId.value && !filteredImages.value.some(img => String(img.id) === formImageId.value)) {
+    formImageId.value = ''
+  }
+})
 
 async function create() {
   if (!formName.value.trim()) { toast.error('请输入名称'); return }
+  if (!formAgentId.value) { toast.error('请选择被控节点（主控不负责创建实例）'); return }
   creating.value = true
   try {
     await virtualisApi.createInstance({
       name: formName.value.trim(),
+      agent_id: parseInt(formAgentId.value),
       driver: formDriver.value,
-      spec: { cpu: formCpu.value, memory_mb: formMem.value, disk_gb: formDisk.value },
+      type: formType.value,
+      spec: { cpu: formCpu.value, memory_mb: formMem.value, disk_gb: formDisk.value, arch: formArch.value },
       image_id: formImageId.value ? parseInt(formImageId.value) : null,
     })
-    toast.success('实例创建成功')
+    toast.success('实例已在被控节点上创建')
     showCreate.value = false
     formName.value=''; formImageId.value=''
     await load()
@@ -71,7 +121,7 @@ async function create() {
 }
 
 async function removeItem(id: number) {
-  if (!confirm('确认删除该实例？')) return
+  if (!confirm('确认删除该实例？会同时在被控节点上销毁对应资源。')) return
   try { await virtualisApi.deleteInstance(id); toast.success('已删除'); await load() } catch (e) { toast.error(errorMessage(e)) }
 }
 
@@ -82,15 +132,21 @@ function statusVariant(s: string) {
   return 'outline'
 }
 
+function formatAgent(agent?: VirtualisAgent | null) {
+  if (!agent) return '-'
+  return agent.display_name || agent.name
+}
+
 onMounted(async () => { await load(); await loadMeta() })
 </script>
 <template>
   <div>
-    <PageHeader title="实例" description="管理虚拟机 / 容器实例">
+    <PageHeader title="实例" description="实例运行在被控节点上，主控仅做编排与展示">
       <template #actions>
-        <Button @click="showCreate=true">创建实例</Button>
+        <Button :disabled="!agents.length" @click="showCreate=true">创建实例</Button>
       </template>
     </PageHeader>
+    <p v-if="!agents.length" class="text-sm text-amber-600 mb-2">暂无在线被控，请先在“被控节点”页添加并接入至少一个节点。</p>
     <ErrorAlert :message="error" />
     <LoadingBlock v-if="loading" />
     <Card v-else>
@@ -101,6 +157,7 @@ onMounted(async () => { await load(); await loadMeta() })
               <tr>
                 <th class="h-10 px-4 text-left font-medium">ID</th>
                 <th class="h-10 px-4 text-left font-medium">名称</th>
+                <th class="h-10 px-4 text-left font-medium">被控</th>
                 <th class="h-10 px-4 text-left font-medium">驱动</th>
                 <th class="h-10 px-4 text-left font-medium">规格</th>
                 <th class="h-10 px-4 text-left font-medium">镜像</th>
@@ -113,6 +170,7 @@ onMounted(async () => { await load(); await loadMeta() })
               <tr v-for="it in instances" :key="it.id" class="border-b hover:bg-muted/20">
                 <td class="px-4 py-2">{{ it.id }}</td>
                 <td class="px-4 py-2"><RouterLink :to="`/admin/instances/${it.id}`" class="text-primary hover:underline">{{ it.name }}</RouterLink></td>
+                <td class="px-4 py-2"><Badge variant="outline">{{ formatAgent((it as any).agent) }}</Badge></td>
                 <td class="px-4 py-2"><Badge variant="outline">{{ it.driver }}</Badge></td>
                 <td class="px-4 py-2">{{ it.spec.cpu }}C / {{ it.spec.memory_mb }}MB / {{ it.spec.disk_gb }}GB</td>
                 <td class="px-4 py-2">{{ it.image?.name ?? (it.image_id ?? '-') }}</td>
@@ -125,7 +183,7 @@ onMounted(async () => { await load(); await loadMeta() })
                   </div>
                 </td>
               </tr>
-              <tr v-if="instances.length===0"><td colspan="8" class="text-center py-8 text-muted-foreground">暂无实例</td></tr>
+              <tr v-if="instances.length===0"><td colspan="9" class="text-center py-8 text-muted-foreground">暂无实例</td></tr>
             </tbody>
           </table>
         </div>
@@ -134,45 +192,67 @@ onMounted(async () => { await load(); await loadMeta() })
     <Pager :page="page" :pageSize="pageSize" :total="total" @update:page="(v:number)=>{ page=v; load() }" />
 
     <Dialog :open="showCreate" @update:open="(v:boolean)=> showCreate=v">
-      <DialogContent>
+      <DialogContent class="max-w-2xl">
         <DialogHeader>
           <DialogTitle>创建实例</DialogTitle>
-          <DialogDescription>选择镜像与规格，驱动可在设置中配置默认值</DialogDescription>
+          <DialogDescription>必须先选择被控节点，驱动与镜像选项由该节点的实际能力决定</DialogDescription>
         </DialogHeader>
         <div class="space-y-4">
           <div class="grid gap-2"><Label>名称</Label><Input v-model="formName" placeholder="my-vm-01" /></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="grid gap-2">
+              <Label>被控节点 *</Label>
+              <Select v-model="formAgentId">
+                <SelectTrigger><SelectValue placeholder="选择被控节点" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem v-for="agent in agents" :key="String(agent.id)" :value="String(agent.id)" :disabled="agent.status!=='online'">
+                    {{ agent.display_name || agent.name }}（{{ agent.status }} · {{ (agent.drivers ?? []).join(', ') || '无驱动上报' }}）
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="grid gap-2">
+              <Label>类型</Label>
+              <Select v-model="formType as any">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="container">容器</SelectItem>
+                  <SelectItem value="vm">虚拟机（qemu/incus 支持）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <div class="grid gap-2">
             <Label>驱动</Label>
-            <Select :modelValue="formDriver" @update:modelValue="(v:any)=> formDriver=v">
+            <Select v-model="formDriver">
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="mock">mock</SelectItem>
-                <SelectItem value="qemu" :disabled="!drivers.find(d=>d.name==='qemu')?.available" :class="!drivers.find(d=>d.name==='qemu')?.available ? 'text-muted-foreground' : ''">qemu{{ drivers.find(d=>d.name==='qemu')?.available ? '' : ' (不可用)' }}</SelectItem>
-                <SelectItem value="lxc" :disabled="!drivers.find(d=>d.name==='lxc')?.available" :class="!drivers.find(d=>d.name==='lxc')?.available ? 'text-muted-foreground' : ''">lxc{{ drivers.find(d=>d.name==='lxc')?.available ? '' : ' (不可用)' }}</SelectItem>
-                <SelectItem value="incus" :disabled="!drivers.find(d=>d.name==='incus')?.available" :class="!drivers.find(d=>d.name==='incus')?.available ? 'text-muted-foreground' : ''">incus{{ drivers.find(d=>d.name==='incus')?.available ? '' : ' (不可用)' }}</SelectItem>
-                <SelectItem value="auto">auto (自动选择可用)</SelectItem>
+                <SelectItem v-for="item in driverItems" :key="item.value" :value="item.value" :disabled="!!item.disabled">{{ item.label }}{{ item.hint ? `（${item.hint}）` : '' }}</SelectItem>
               </SelectContent>
             </Select>
+            <p v-if="!selectedAgent" class="text-xs text-amber-600">请先选择被控节点。</p>
+            <p v-else-if="!availableDriversForAgent.length" class="text-xs text-muted-foreground">该节点尚未上报可用驱动，仅可使用 mock。</p>
           </div>
-          <div class="grid grid-cols-3 gap-3">
-            <div class="grid gap-2"><Label>CPU (核)</Label><Input :modelValue="String(formCpu)" @update:modelValue="(v:any)=> formCpu=parseInt(v)||1" type="number" /></div>
+          <div class="grid grid-cols-4 gap-3">
+            <div class="grid gap-2"><Label>CPU</Label><Input :modelValue="String(formCpu)" @update:modelValue="(v:any)=> formCpu=parseInt(v)||1" type="number" /></div>
             <div class="grid gap-2"><Label>内存 MB</Label><Input :modelValue="String(formMem)" @update:modelValue="(v:any)=> formMem=parseInt(v)||128" type="number" /></div>
             <div class="grid gap-2"><Label>磁盘 GB</Label><Input :modelValue="String(formDisk)" @update:modelValue="(v:any)=> formDisk=parseInt(v)||5" type="number" /></div>
+            <div class="grid gap-2"><Label>架构</Label><Select v-model="formArch"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="x86_64">x86_64</SelectItem><SelectItem value="arm64">arm64</SelectItem><SelectItem value="aarch64">aarch64</SelectItem></SelectContent></Select></div>
           </div>
           <div class="grid gap-2">
             <Label>镜像</Label>
-            <Select :modelValue="formImageId" @update:modelValue="(v:any)=> formImageId=v">
-              <SelectTrigger><SelectValue placeholder="选择镜像 (可选)" /></SelectTrigger>
+            <Select v-model="formImageId">
+              <SelectTrigger><SelectValue placeholder="选择镜像（可选，已按驱动过滤）" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="">无</SelectItem>
-                <SelectItem v-for="img in images" :key="String(img.id)" :value="String(img.id)">{{ img.name }} ({{ img.driver }})</SelectItem>
+                <SelectItem v-for="img in filteredImages" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }} / {{ img.type }}）</SelectItem>
               </SelectContent>
             </Select>
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" @click="showCreate=false">取消</Button>
-          <Button :disabled="creating" @click="create">{{ creating ? '创建中...' : '创建' }}</Button>
+          <Button :disabled="creating || !formAgentId" @click="create">{{ creating ? '创建中...' : '创建' }}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
