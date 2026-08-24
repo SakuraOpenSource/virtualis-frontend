@@ -1,7 +1,7 @@
 import { http } from './api'
 import type {
   Bootstrap, CaptchaChallenge, CaptchaSettings, SiteSettings, VirtualisSettings,
-  Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver,
+  Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver, InstanceMetrics, NetworkStatus, VNCInfo, NetworkConfig,
   VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest
 } from './types'
 
@@ -63,7 +63,7 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
     return data
   },
-  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; memory_mb: number; disk_gb: number; arch?: string }; image_id?: number | null }) {
+  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null }) {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
@@ -77,6 +77,18 @@ export const virtualisApi = {
   async status(id: number) {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}/status`)
     return data
+  },
+  async metrics(id: number) {
+    const { data } = await http.get<{ metrics: InstanceMetrics }>(`/instances/${id}/metrics`)
+    return data.metrics
+  },
+  async network(id: number) {
+    const { data } = await http.get<{ network: NetworkStatus }>(`/instances/${id}/network`)
+    return data.network
+  },
+  async vnc(id: number) {
+    const { data } = await http.get<{ vnc: VNCInfo }>(`/instances/${id}/vnc`)
+    return data.vnc
   },
   async images() {
     const { data } = await http.get<{ items: VirtualisImage[] | null }>('/images')

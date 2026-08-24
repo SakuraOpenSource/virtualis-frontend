@@ -77,6 +77,16 @@ export interface InstanceSpec {
   arch?: string
 }
 
+export interface NetworkConfig {
+  mode: 'nat' | 'bridge' | 'none' | string
+  bridge?: string
+  mac?: string
+  ipv4?: string
+  gateway?: string
+  dns?: string[]
+  bandwidth_mbps?: number
+}
+
 export interface VirtualisInstance {
   id: number
   name: string
@@ -84,6 +94,7 @@ export interface VirtualisInstance {
   driver: string
   type: 'container' | 'vm' | string
   spec: InstanceSpec
+  network?: NetworkConfig
   status: string
   image_id?: number | null
   image?: VirtualisImage | null
@@ -91,6 +102,46 @@ export interface VirtualisInstance {
   agent?: VirtualisAgent | null
   created_at: string
   updated_at: string
+}
+
+export interface InstanceMetrics {
+  cpu_percent: number
+  memory_used_mb: number
+  memory_total_mb: number
+  network_rx_bytes: number
+  network_tx_bytes: number
+  bandwidth_rx_bps: number
+  bandwidth_tx_bps: number
+  collected_at: string
+}
+
+export interface NetworkInterface {
+  name: string
+  mac?: string
+  state?: string
+  ipv4?: string[]
+  ipv6?: string[]
+  rx_bytes: number
+  tx_bytes: number
+}
+
+export interface NetworkStatus {
+  reachable: boolean
+  latency_ms: number
+  interfaces: NetworkInterface[]
+  error?: string
+  checked_at: string
+}
+
+export interface VNCInfo {
+  available: boolean
+  protocol?: string
+  host?: string
+  port?: number
+  display?: string
+  url?: string
+  web_url?: string
+  message?: string
 }
 
 export interface VirtualisImage {

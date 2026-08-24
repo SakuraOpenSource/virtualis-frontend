@@ -119,7 +119,7 @@ onMounted(loadAll)
               <Select v-model="vDriver">
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem v-for="name in driverNames" :key="name" :value="name" :disabled="!driverAvailable(name)" :class="!driverAvailable(name) ? 'text-muted-foreground' : ''">{{ driverLabel(name) }}</SelectItem>
+                  <SelectItem v-for="name in driverNames" :key="name" :value="name" :disabled="!driverAvailable(name)">{{ driverLabel(name) }}</SelectItem>
                 </SelectContent>
               </Select>
               <p class="text-xs text-muted-foreground">驱动安装在被控节点上，未安装的驱动不可选。</p>

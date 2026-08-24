@@ -36,7 +36,14 @@ const formCpu = ref(2)
 const formMem = ref(1024)
 const formDisk = ref(20)
 const formArch = ref('x86_64')
-const formImageId = ref<string>('')
+const formImageId = ref<string>('none')
+const formNetworkMode = ref<'nat' | 'bridge' | 'none'>('nat')
+const formBridge = ref('')
+const formMAC = ref('')
+const formIPv4 = ref('')
+const formGateway = ref('')
+const formDNS = ref('')
+const formBandwidth = ref(0)
 
 const agents = ref<VirtualisAgent[]>([])
 const drivers = ref<VirtualisDriver[]>([])
@@ -95,8 +102,8 @@ watch(formAgentId, () => {
 })
 
 watch(filteredImages, () => {
-  if (formImageId.value && !filteredImages.value.some(img => String(img.id) === formImageId.value)) {
-    formImageId.value = ''
+  if (formImageId.value !== 'none' && !filteredImages.value.some(img => String(img.id) === formImageId.value)) {
+    formImageId.value = 'none'
   }
 })
 
@@ -111,11 +118,20 @@ async function create() {
       driver: formDriver.value,
       type: formType.value,
       spec: { cpu: formCpu.value, memory_mb: formMem.value, disk_gb: formDisk.value, arch: formArch.value },
-      image_id: formImageId.value ? parseInt(formImageId.value) : null,
+      network: {
+        mode: formNetworkMode.value,
+        bridge: formBridge.value.trim() || undefined,
+        mac: formMAC.value.trim() || undefined,
+        ipv4: formIPv4.value.trim() || undefined,
+        gateway: formGateway.value.trim() || undefined,
+        dns: formDNS.value.split(',').map(value => value.trim()).filter(Boolean),
+        bandwidth_mbps: formBandwidth.value || undefined,
+      },
+      image_id: formImageId.value !== 'none' ? parseInt(formImageId.value) : null,
     })
     toast.success('实例已在被控节点上创建')
     showCreate.value = false
-    formName.value=''; formImageId.value=''
+    formName.value=''; formImageId.value='none'; formNetworkMode.value='nat'; formBridge.value=''; formMAC.value=''; formIPv4.value=''; formGateway.value=''; formDNS.value=''; formBandwidth.value=0
     await load()
   } catch (e) { toast.error(errorMessage(e)) } finally { creating.value=false }
 }
@@ -244,10 +260,23 @@ onMounted(async () => { await load(); await loadMeta() })
             <Select v-model="formImageId">
               <SelectTrigger><SelectValue placeholder="选择镜像（可选，已按驱动过滤）" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="">无</SelectItem>
+                <SelectItem value="none">无</SelectItem>
                 <SelectItem v-for="img in filteredImages" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }} / {{ img.type }}）</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div class="space-y-4 rounded-md border p-4">
+            <div><div class="text-sm font-medium">虚拟网卡与网络</div><p class="text-xs text-muted-foreground">创建时由被控驱动配置；NAT 使用宿主默认网络，桥接需要被控上已存在对应网桥。</p></div>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（默认网络）</SelectItem><SelectItem value="bridge">桥接网络</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
+              <div v-if="formNetworkMode === 'bridge'" class="grid gap-2"><Label>网桥名称 *</Label><Input v-model="formBridge" placeholder="br0" /></div>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="grid gap-2"><Label>MAC 地址</Label><Input v-model="formMAC" placeholder="52:54:00:xx:xx:xx" /></div>
+              <div class="grid gap-2"><Label>IPv4 / CIDR</Label><Input v-model="formIPv4" placeholder="192.168.1.20/24" /></div>
+              <div class="grid gap-2"><Label>网关</Label><Input v-model="formGateway" placeholder="192.168.1.1" /></div>
+            </div>
+            <div class="grid gap-3 sm:grid-cols-2"><div class="grid gap-2"><Label>DNS（逗号分隔）</Label><Input v-model="formDNS" placeholder="1.1.1.1,8.8.8.8" /></div><div class="grid gap-2"><Label>带宽限制 Mbps</Label><Input :modelValue="String(formBandwidth)" @update:modelValue="(v:any)=> formBandwidth=parseInt(v)||0" type="number" min="0" /></div></div>
           </div>
         </div>
         <DialogFooter>
