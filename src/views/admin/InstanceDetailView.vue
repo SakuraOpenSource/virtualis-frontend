@@ -5,13 +5,14 @@ import RFB from '@novnc/novnc'
 import { virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
-import type { InstanceMetrics, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance } from '@/lib/types'
+import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
 import { formatBytes, formatDateTime } from '@/lib/utils'
@@ -36,6 +37,72 @@ const consoleOpen = ref(false)
 const vncTarget = ref<HTMLElement | null>(null)
 let rfb: RFB | null = null
 let telemetryTimer: ReturnType<typeof setInterval> | undefined
+
+// NAT 映射与 SSH 密码管理。
+const natMappings = ref<NATMapping[]>([])
+const natForm = ref({ protocol: 'tcp', guest_port: '', host_port: '', remark: '' })
+const natBusy = ref(false)
+const showPassword = ref(false)
+const passwordBusy = ref(false)
+
+const sshMapping = computed(() => natMappings.value.find(m => m.guest_port === 22 && m.protocol === 'tcp') ?? null)
+const sshHost = computed(() => inst.value?.agent?.ip || inst.value?.agent?.endpoint?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') || '')
+const sshCommand = computed(() => sshMapping.value && sshHost.value ? `ssh root@${sshHost.value} -p ${sshMapping.value.host_port}` : '')
+
+async function loadNAT() {
+  try {
+    const fresh = await virtualisApi.instance(id)
+    inst.value = fresh
+    natMappings.value = fresh.nat_mappings ?? []
+  } catch { /* 详情加载失败时主流程已有错误提示 */ }
+}
+
+async function addNAT() {
+  const guestPort = parseInt(natForm.value.guest_port)
+  if (!guestPort || guestPort < 1 || guestPort > 65535) { toast.error('请填写实例端口（1-65535）'); return }
+  natBusy.value = true
+  try {
+    await virtualisApi.createNATMapping(id, {
+      protocol: natForm.value.protocol,
+      guest_port: guestPort,
+      host_port: parseInt(natForm.value.host_port) || 0,
+      remark: natForm.value.remark.trim() || undefined,
+    })
+    toast.success('映射已添加' )
+    natForm.value = { protocol: natForm.value.protocol, guest_port: '', host_port: '', remark: '' }
+    await loadNAT()
+  } catch (e) { toast.error(errorMessage(e)) } finally { natBusy.value = false }
+}
+
+async function removeNAT(mappingId?: number) {
+  if (!mappingId || !confirm('确认删除该端口映射？')) return
+  natBusy.value = true
+  try {
+    await virtualisApi.deleteNATMapping(id, mappingId)
+    toast.success('映射已删除')
+    await loadNAT()
+  } catch (e) { toast.error(errorMessage(e)) } finally { natBusy.value = false }
+}
+
+async function rotatePassword() {
+  const password = generatePassword()
+  if (!confirm('生成新的 root 密码并注入实例？旧密码将失效。')) return
+  passwordBusy.value = true
+  try {
+    const updated = await virtualisApi.setPassword(id, password)
+    inst.value = updated
+    natMappings.value = updated.nat_mappings ?? natMappings.value
+    showPassword.value = true
+    toast.success('密码已更新，运行中的实例会自动注入')
+  } catch (e) { toast.error(errorMessage(e)) } finally { passwordBusy.value = false }
+}
+
+function generatePassword(len = 16) {
+  const charset = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  let out = ''
+  for (let i = 0; i < len; i++) out += charset[Math.floor(Math.random() * charset.length)]
+  return out
+}
 
 const memoryPercent = computed(() => {
   if (!metrics.value || metrics.value.memory_total_mb <= 0) return 0
@@ -141,6 +208,7 @@ onMounted(async () => {
   await load()
   await Promise.all([loadImages(), refreshTelemetry()])
   telemetryTimer = setInterval(() => refreshTelemetry(), 10000)
+  await loadNAT()
 })
 
 onBeforeUnmount(() => {
@@ -173,6 +241,87 @@ onBeforeUnmount(() => {
           <div><span class="text-muted-foreground">网络：</span>{{ inst.network?.mode || 'nat' }}{{ inst.network?.bridge ? ` / ${inst.network.bridge}` : '' }}</div>
           <div><span class="text-muted-foreground">创建：</span>{{ formatDateTime(inst.created_at) }}</div>
           <div><span class="text-muted-foreground">更新：</span>{{ formatDateTime(inst.updated_at) }}</div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>SSH 访问</CardTitle>
+          <CardDescription>NAT 模式下创建实例时自动生成密码并映射 22 端口</CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <template v-if="sshCommand">
+            <div class="grid gap-2">
+              <Label class="text-muted-foreground text-xs">连接命令</Label>
+              <code class="bg-muted/40 block overflow-x-auto rounded-md border p-3 text-sm">{{ sshCommand }}</code>
+            </div>
+            <div class="grid gap-2">
+              <Label class="text-muted-foreground text-xs">root 密码</Label>
+              <div class="flex flex-wrap items-center gap-2">
+                <code class="bg-muted/40 rounded-md border px-3 py-2 text-sm tabular">
+                  {{ inst.ssh_password ? (showPassword ? inst.ssh_password : '••••••••••••••••') : '未生成' }}
+                </code>
+                <Button variant="outline" size="sm" @click="showPassword = !showPassword">{{ showPassword ? '隐藏' : '显示' }}</Button>
+                <Button variant="outline" size="sm" :disabled="passwordBusy" @click="rotatePassword">重置密码</Button>
+              </div>
+              <p class="text-muted-foreground text-xs">QEMU 虚拟机需客户机安装并运行 qemu-guest-agent，密码注入才会生效。</p>
+            </div>
+          </template>
+          <p v-else class="text-muted-foreground text-sm">
+            {{ inst.network?.mode === 'nat' ? '尚未生成 SSH 映射（实例可能创建于该功能上线前，可手动添加 22 端口映射）。' : '非 NAT 模式请直接使用独立 IP 连接。' }}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>NAT 端口映射</CardTitle>
+          <CardDescription>
+            把宿主机端口转发到实例端口；上限 {{ inst.max_nat_mappings ? `${inst.max_nat_mappings} 条` : '不限' }}，当前 {{ natMappings.length }} 条
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div v-if="natMappings.length" class="divide-y rounded-md border">
+            <div v-for="m in natMappings" :key="m.id" class="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+              <div class="flex items-center gap-3">
+                <Badge variant="outline">{{ m.protocol.toUpperCase() }}</Badge>
+                <span class="font-medium tabular">{{ m.host_port }}</span>
+                <span class="text-muted-foreground">→</span>
+                <span class="tabular">实例 {{ m.guest_port }}</span>
+                <span v-if="m.remark" class="text-muted-foreground">{{ m.remark }}</span>
+              </div>
+              <Button variant="ghost" size="sm" class="text-destructive" :disabled="natBusy" @click="removeNAT(m.id)">删除</Button>
+            </div>
+          </div>
+          <p v-else class="text-muted-foreground text-sm">暂无映射。</p>
+
+          <form class="grid gap-3 sm:grid-cols-5" @submit.prevent="addNAT">
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">协议</Label>
+              <Select v-model="natForm.protocol">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tcp">TCP</SelectItem>
+                  <SelectItem value="udp">UDP</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">实例端口 *</Label>
+              <Input :modelValue="natForm.guest_port" @update:modelValue="(v:any)=> natForm.guest_port=v" placeholder="80" inputmode="numeric" />
+            </div>
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">宿主端口（留空自动）</Label>
+              <Input :modelValue="natForm.host_port" @update:modelValue="(v:any)=> natForm.host_port=v" placeholder="自动分配" inputmode="numeric" />
+            </div>
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">备注</Label>
+              <Input :modelValue="natForm.remark" @update:modelValue="(v:any)=> natForm.remark=v" placeholder="网站" />
+            </div>
+            <div class="flex items-end">
+              <Button type="submit" class="w-full" :disabled="natBusy">添加映射</Button>
+            </div>
+          </form>
         </CardContent>
       </Card>
 

@@ -42,6 +42,8 @@ const formNetworkMode = ref<'nat' | 'dedicated' | 'none'>('nat')
 const formBridge = ref('')
 const hostIfaces = ref<HostInterface[]>([])
 const hostIPv4Count = ref(0)
+const formMaxNATMappings = ref(0)
+const formAutoPassword = ref(true)
 const formMAC = ref('')
 const formIPv4 = ref('')
 const formGateway = ref('')
@@ -146,10 +148,12 @@ async function create() {
         bandwidth_mbps: formBandwidth.value || undefined,
       },
       image_id: formImageId.value !== 'none' ? parseInt(formImageId.value) : null,
+      max_nat_mappings: formMaxNATMappings.value || 0,
+      auto_password: formAutoPassword.value,
     })
     toast.success('实例已在被控节点上创建')
     showCreate.value = false
-    formName.value=''; formImageId.value='none'; formNetworkMode.value='nat'; formBridge.value=''; formMAC.value=''; formIPv4.value=''; formGateway.value=''; formDNS.value=''; formBandwidth.value=0; hostIfaces.value=[]; hostIPv4Count.value=0
+    formName.value=''; formImageId.value='none'; formNetworkMode.value='nat'; formBridge.value=''; formMAC.value=''; formIPv4.value=''; formGateway.value=''; formDNS.value=''; formBandwidth.value=0; hostIfaces.value=[]; hostIPv4Count.value=0; formMaxNATMappings.value=0; formAutoPassword.value=true
     await load()
   } catch (e) { toast.error(errorMessage(e)) } finally { creating.value=false }
 }
@@ -282,6 +286,21 @@ onMounted(async () => { await load(); await loadMeta() })
                 <SelectItem v-for="img in filteredImages" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }} / {{ img.type }}）</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+          <div class="grid gap-3 sm:grid-cols-2">
+            <div class="grid gap-2">
+              <Label>最大 NAT 映射数</Label>
+              <Input :modelValue="String(formMaxNATMappings)" @update:modelValue="(v:any)=> formMaxNATMappings=parseInt(v)||0" type="number" min="0" />
+              <p class="text-xs text-muted-foreground">该实例可创建的 NAT 端口转发上限，0 表示不限。NAT 模式下创建时自动生成一条 SSH 映射。</p>
+            </div>
+            <div class="grid gap-2">
+              <Label>SSH 访问</Label>
+              <div class="flex h-10 items-center gap-2">
+                <input id="auto-password" type="checkbox" v-model="formAutoPassword" class="size-4 accent-primary" />
+                <Label for="auto-password" class="font-normal">自动生成 root 随机密码</Label>
+              </div>
+              <p class="text-xs text-muted-foreground">密码可在实例详情页查看，创建时自动映射 SSH 端口（仅 NAT 模式）。</p>
+            </div>
           </div>
           <div class="space-y-4 rounded-md border p-4">
             <div><div class="text-sm font-medium">虚拟网卡与网络</div><p class="text-xs text-muted-foreground">NAT 由被控自动配置默认网络（共享主机出口 IP）；独立 IP 把实例网卡直连主机网段，仅当主机有至少 2 个 IPv4 地址时可用。</p>

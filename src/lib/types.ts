@@ -87,6 +87,17 @@ export interface NetworkConfig {
   bandwidth_mbps?: number
 }
 
+/** NAT 端口转发：被控主机 host_port → 实例 guest_port。 */
+export interface NATMapping {
+  id?: number
+  instance_id?: number
+  protocol: string
+  host_port: number
+  guest_port: number
+  remark?: string
+  auto?: boolean
+}
+
 export interface VirtualisInstance {
   id: number
   name: string
@@ -100,6 +111,9 @@ export interface VirtualisInstance {
   image?: VirtualisImage | null
   agent_id?: number | null
   agent?: VirtualisAgent | null
+  max_nat_mappings?: number
+  nat_mappings?: NATMapping[]
+  ssh_password?: string
   created_at: string
   updated_at: string
 }

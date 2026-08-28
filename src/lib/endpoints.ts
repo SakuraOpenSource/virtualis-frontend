@@ -3,7 +3,8 @@ import type {
   Bootstrap, CaptchaChallenge, CaptchaSettings, SiteSettings, VirtualisSettings,
   Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver, InstanceMetrics, NetworkStatus, VNCInfo, NetworkConfig,
   VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest,
-  HostNetworkSummary
+  HostNetworkSummary,
+  NATMapping
 } from './types'
 
 interface PageQuery { page?: number; page_size?: number }
@@ -52,6 +53,19 @@ export const authApi = {
 }
 
 export const virtualisApi = {
+  /** 新增 NAT 端口映射；host_port 传 0 由主控自动分配。 */
+  async createNATMapping(id: number, payload: { protocol: string; host_port?: number; guest_port: number; remark?: string }) {
+    const { data } = await http.post<NATMapping>(`/instances/${id}/nat`, payload)
+    return data
+  },
+  async deleteNATMapping(id: number, mappingId: number) {
+    await http.delete(`/instances/${id}/nat/${mappingId}`)
+  },
+  /** 设置 root 密码；实例运行中会异步注入（QEMU 依赖 guest agent）。 */
+  async setPassword(id: number, password: string) {
+    const { data } = await http.post<VirtualisInstance>(`/instances/${id}/password`, { password })
+    return data
+  },
   async drivers() {
     const { data } = await http.get<{ items: VirtualisDriver[] }>('/drivers')
     return data.items ?? []
@@ -64,7 +78,7 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
     return data
   },
-  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null }) {
+  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean }) {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
