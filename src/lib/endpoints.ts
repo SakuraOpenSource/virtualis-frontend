@@ -2,7 +2,8 @@ import { http } from './api'
 import type {
   Bootstrap, CaptchaChallenge, CaptchaSettings, SiteSettings, VirtualisSettings,
   Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver, InstanceMetrics, NetworkStatus, VNCInfo, NetworkConfig,
-  VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest
+  VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest,
+  HostNetworkSummary
 } from './types'
 
 interface PageQuery { page?: number; page_size?: number }
@@ -114,6 +115,11 @@ export const virtualisApi = {
 }
 
 export const agentApi = {
+  /** 被控主机网卡清单；独立 IP 模式的挂载接口与可用性判断数据源。 */
+  async hostNetwork(id: number) {
+    const { data } = await http.get<HostNetworkSummary>(`/admin/agents/${id}/network`)
+    return data
+  },
   async list() {
     const { data } = await http.get<{ items: VirtualisAgent[] }>('/admin/agents')
     return data.items ?? []

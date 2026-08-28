@@ -169,6 +169,22 @@ export interface VirtualisDriver {
   error?: string
 }
 
+/** 被控主机网卡，供独立 IP 模式选择挂载目标。 */
+export interface HostInterface {
+  name: string
+  kind: string
+  state: string
+  mac?: string
+  ipv4?: string[]
+  ipv6?: string[]
+}
+
+/** 被控主机网络汇总。ipv4_count >= 2 时独立 IP 模式可用。 */
+export interface HostNetworkSummary {
+  interfaces: HostInterface[]
+  ipv4_count: number
+}
+
 export interface VirtualisAgent {
   id: number
   name: string

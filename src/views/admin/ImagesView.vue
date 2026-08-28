@@ -34,7 +34,6 @@ const driverOptions = [
   { value: 'qemu', label: 'qemu' },
   { value: 'incus', label: 'incus' },
   { value: 'lxc', label: 'lxc' },
-  { value: 'mock', label: 'mock' },
 ]
 
 const typeOptions: Array<{ value: 'disk' | 'iso'; label: string; desc: string }> = [

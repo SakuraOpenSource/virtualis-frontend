@@ -25,7 +25,7 @@ const siteName = ref('')
 const siteDesc = ref('')
 
 // virtualis
-const vDriver = ref('mock')
+const vDriver = ref('auto')
 const vCpu = ref(2)
 const vMem = ref(1024)
 const vDisk = ref(20)
@@ -34,7 +34,7 @@ const vAllowReinstall = ref(true)
 const vAutoRefresh = ref(true)
 const drivers = ref<VirtualisDriver[]>([])
 
-const driverNames = ['auto', 'incus', 'qemu', 'lxc', 'mock']
+const driverNames = ['auto', 'incus', 'qemu', 'lxc']
 
 function driverAvailable(name: string) {
   if (name === 'auto') return drivers.value.some((driver) => driver.available)

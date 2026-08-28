@@ -3,7 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { agentApi, virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
-import type { VirtualisAgent, VirtualisImage } from '@/lib/types'
+import type {
+  HostInterface, VirtualisAgent, VirtualisImage } from '@/lib/types'
 import type { VirtualisDriver, VirtualisInstance } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
@@ -37,8 +38,10 @@ const formMem = ref(1024)
 const formDisk = ref(20)
 const formArch = ref('x86_64')
 const formImageId = ref<string>('none')
-const formNetworkMode = ref<'nat' | 'bridge' | 'none'>('nat')
+const formNetworkMode = ref<'nat' | 'dedicated' | 'none'>('nat')
 const formBridge = ref('')
+const hostIfaces = ref<HostInterface[]>([])
+const hostIPv4Count = ref(0)
 const formMAC = ref('')
 const formIPv4 = ref('')
 const formGateway = ref('')
@@ -62,16 +65,30 @@ const driverItems = computed(() => {
     { value: 'incus', label: 'incus' },
     { value: 'qemu', label: 'qemu' },
     { value: 'lxc', label: 'lxc' },
-    { value: 'mock', label: 'mock' },
   ]
   if (!selectedAgent.value) return base.map(b => ({ ...b, disabled: true, hint: '请先选择被控节点' }))
-  if (!availableDriversForAgent.value.length) return base.map(b => ({ ...b, disabled: b.value !== 'mock', hint: b.value === 'mock' ? undefined : '该节点未上报该驱动' }))
+  if (!availableDriversForAgent.value.length) return base.map(b => ({ ...b, disabled: true, hint: '该节点未上报可用驱动' }))
   return base.map(item => {
     if (item.value === 'auto') return { ...item, disabled: false }
     const ok = availableDriversForAgent.value.includes(item.value)
     return { ...item, disabled: !ok, hint: ok ? undefined : '未安装' }
   })
 })
+
+// 独立 IP 模式的挂载接口下拉项：优先软件网桥，其次物理网卡。
+const ifaceItems = computed(() => hostIfaces.value.filter(i => i.kind === 'bridge' || i.kind === 'physical' || i.kind === 'vlan'))
+const dedicatedAvailable = computed(() => hostIPv4Count.value >= 2)
+
+async function loadAgentNetwork() {
+  hostIfaces.value = []
+  hostIPv4Count.value = 0
+  if (!formAgentId.value) return
+  try {
+    const summary = await agentApi.hostNetwork(parseInt(formAgentId.value))
+    hostIfaces.value = summary.interfaces ?? []
+    hostIPv4Count.value = summary.ipv4_count ?? 0
+  } catch { /* 节点暂时不可达时表单仍可用，仅无候选接口 */ }
+}
 
 const filteredImages = computed(() => {
   if (!formDriver.value || formDriver.value === 'auto') return images.value
@@ -99,6 +116,7 @@ watch(formAgentId, () => {
   if (availableDriversForAgent.value.length && !availableDriversForAgent.value.includes(formDriver.value) && formDriver.value !== 'auto') {
     formDriver.value = 'auto'
   }
+  loadAgentNetwork()
 })
 
 watch(filteredImages, () => {
@@ -131,7 +149,7 @@ async function create() {
     })
     toast.success('实例已在被控节点上创建')
     showCreate.value = false
-    formName.value=''; formImageId.value='none'; formNetworkMode.value='nat'; formBridge.value=''; formMAC.value=''; formIPv4.value=''; formGateway.value=''; formDNS.value=''; formBandwidth.value=0
+    formName.value=''; formImageId.value='none'; formNetworkMode.value='nat'; formBridge.value=''; formMAC.value=''; formIPv4.value=''; formGateway.value=''; formDNS.value=''; formBandwidth.value=0; hostIfaces.value=[]; hostIPv4Count.value=0
     await load()
   } catch (e) { toast.error(errorMessage(e)) } finally { creating.value=false }
 }
@@ -247,7 +265,7 @@ onMounted(async () => { await load(); await loadMeta() })
               </SelectContent>
             </Select>
             <p v-if="!selectedAgent" class="text-xs text-amber-600">请先选择被控节点。</p>
-            <p v-else-if="!availableDriversForAgent.length" class="text-xs text-muted-foreground">该节点尚未上报可用驱动，仅可使用 mock。</p>
+            <p v-else-if="!availableDriversForAgent.length" class="text-xs text-muted-foreground">该节点尚未上报可用驱动，无法创建实例。</p>
           </div>
           <div class="grid grid-cols-4 gap-3">
             <div class="grid gap-2"><Label>CPU</Label><Input :modelValue="String(formCpu)" @update:modelValue="(v:any)=> formCpu=parseInt(v)||1" type="number" /></div>
@@ -266,10 +284,22 @@ onMounted(async () => { await load(); await loadMeta() })
             </Select>
           </div>
           <div class="space-y-4 rounded-md border p-4">
-            <div><div class="text-sm font-medium">虚拟网卡与网络</div><p class="text-xs text-muted-foreground">创建时由被控驱动配置；NAT 使用宿主默认网络，桥接需要被控上已存在对应网桥。</p></div>
+            <div><div class="text-sm font-medium">虚拟网卡与网络</div><p class="text-xs text-muted-foreground">NAT 由被控自动配置默认网络（共享主机出口 IP）；独立 IP 把实例网卡直连主机网段，仅当主机有至少 2 个 IPv4 地址时可用。</p>
+              <p v-if="formAgentId && !dedicatedAvailable" class="text-xs text-amber-600">该节点当前 {{ hostIPv4Count }} 个 IPv4 地址，独立 IP 模式不可用。</p>
+            </div>
             <div class="grid gap-3 sm:grid-cols-2">
-              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（默认网络）</SelectItem><SelectItem value="bridge">桥接网络</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
-              <div v-if="formNetworkMode === 'bridge'" class="grid gap-2"><Label>网桥名称 *</Label><Input v-model="formBridge" placeholder="br0" /></div>
+              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（共享主机 IP）</SelectItem><SelectItem value="dedicated" :disabled="!dedicatedAvailable">独立 IP（直连主机网段）</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
+              <div v-if="formNetworkMode === 'dedicated'" class="grid gap-2">
+                <Label>挂载接口</Label>
+                <Select v-model="formBridge">
+                  <SelectTrigger><SelectValue placeholder="自动选择物理网卡" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">自动选择物理网卡</SelectItem>
+                    <SelectItem v-for="iface in ifaceItems" :key="iface.name" :value="iface.name">{{ iface.name }}（{{ iface.kind }} · {{ (iface.ipv4 ?? []).join(', ') || '无 IPv4' }}）</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p class="text-xs text-muted-foreground">选择已存在的网桥或物理网卡；网桥直接挂载，物理网卡以 macvtap 直连。</p>
+              </div>
             </div>
             <div class="grid gap-3 sm:grid-cols-3">
               <div class="grid gap-2"><Label>MAC 地址</Label><Input v-model="formMAC" placeholder="52:54:00:xx:xx:xx" /></div>
