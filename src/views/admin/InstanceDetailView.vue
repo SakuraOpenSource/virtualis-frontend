@@ -35,6 +35,7 @@ const networkLoading = ref(false)
 const vncLoading = ref(false)
 const consoleOpen = ref(false)
 const vncTarget = ref<HTMLElement | null>(null)
+const vncConnected = ref(false)
 let rfb: RFB | null = null
 let telemetryTimer: ReturnType<typeof setInterval> | undefined
 
@@ -160,12 +161,18 @@ async function loadVNC() {
     await nextTick()
     if (!vncTarget.value) return
     const webURL = vnc.value.web_url || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/instances/${id}/vnc/ws`
+    // resizeSession 必须关：QEMU 对 VGA 的 SetDesktopSize 请求会回
+    // "Invalid screen layout"，随后画面不再渲染，看起来像连不上。
     rfb = new RFB(vncTarget.value, webURL)
     rfb.scaleViewport = true
-    rfb.resizeSession = true
+    rfb.resizeSession = false
     rfb.viewOnly = false
-    rfb.addEventListener('connect', () => toast.success('VNC 已连接'))
-    rfb.addEventListener('disconnect', () => toast.error('VNC 连接已断开'))
+    rfb.addEventListener('connect', () => { vncConnected.value = true; toast.success('VNC 已连接，黑屏时在画面内点击或按键唤醒') })
+    rfb.addEventListener('disconnect', (e) => {
+      vncConnected.value = false
+      const clean = (e as CustomEvent).detail?.clean
+      toast.error(clean ? 'VNC 连接已断开' : 'VNC 异常断开，请重试')
+    })
   } catch (e) { toast.error(errorMessage(e)) } finally { vncLoading.value = false }
 }
 
@@ -370,7 +377,7 @@ onBeforeUnmount(() => {
       </div>
 
       <Card>
-        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>VNC 连接</CardTitle><CardDescription>通过主控内置 WebSocket 代理使用 noVNC，浏览器无需安装 VNC 客户端</CardDescription></div><div class="flex gap-2"><Button :disabled="vncLoading" @click="loadVNC">{{ vncLoading ? '连接中...' : consoleOpen ? '重连 VNC' : '连接 VNC' }}</Button><Button v-if="consoleOpen" variant="outline" @click="disconnectVNC">断开</Button></div></div></CardHeader>
+        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>VNC 连接</CardTitle><CardDescription>通过主控内置 WebSocket 代理使用 noVNC，浏览器无需安装 VNC 客户端</CardDescription></div><div class="flex gap-2"><Button :disabled="vncLoading" @click="loadVNC">{{ vncLoading ? '连接中...' : consoleOpen ? '重连 VNC' : '连接 VNC' }}</Button><Button v-if="consoleOpen" variant="outline" @click="disconnectVNC">断开</Button><Badge v-if="vncConnected" variant="outline">已连接</Badge><Badge v-else-if="consoleOpen" variant="outline">未连接</Badge></div></div></CardHeader>
         <CardContent>
           <div v-if="consoleOpen" ref="vncTarget" class="min-h-[420px] w-full overflow-hidden rounded-md bg-black" />
           <div v-else-if="vnc?.available" class="space-y-3"><div class="flex flex-wrap items-center gap-2"><code class="rounded border bg-muted px-3 py-2 text-sm">{{ vnc.url }}</code><Button variant="outline" size="sm" @click="copy(vnc.url || '')">复制</Button></div><p class="text-xs text-muted-foreground">主机：{{ vnc.host }}，端口：{{ vnc.port }}，显示：{{ vnc.display }}。也可以使用桌面 VNC 客户端连接。</p></div>
