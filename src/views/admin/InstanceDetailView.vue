@@ -170,8 +170,11 @@ async function loadVNC() {
     rfb.addEventListener('connect', () => { vncConnected.value = true; toast.success('VNC 已连接，黑屏时在画面内点击或按键唤醒') })
     rfb.addEventListener('disconnect', (e) => {
       vncConnected.value = false
-      const clean = (e as CustomEvent).detail?.clean
-      toast.error(clean ? 'VNC 连接已断开' : 'VNC 异常断开，请重试')
+      const detail = (e as CustomEvent).detail || {}
+      // 断开原因打进 console：clean=false 且秒断通常是浏览器刷新/手动重连，
+      // 握手阶段异常则要看这里和主控、被控两侧的 journal 对照。
+      console.warn('[VNC] 断开', detail)
+      toast.error(detail.clean ? 'VNC 连接已断开' : 'VNC 异常断开，请点击「重连 VNC」重试')
     })
   } catch (e) { toast.error(errorMessage(e)) } finally { vncLoading.value = false }
 }
