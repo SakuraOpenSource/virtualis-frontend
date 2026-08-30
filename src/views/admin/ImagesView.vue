@@ -124,11 +124,7 @@ const incusLevels = computed(() => [
   { key: 'variant', value: dlVariant.value, label: '变体', next: !!dlArch.value && !dlVariant.value },
 ] as Array<{ key: string; value: string; label: string; next: boolean }>)
 
-async function browseIncus(level: string, value: string) {
-  if (level === 'distro') { dlDistro.value = value; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = '' }
-  if (level === 'release') { dlRelease.value = value; dlArch.value = ''; dlVariant.value = '' }
-  if (level === 'arch') { dlArch.value = value; dlVariant.value = '' }
-  if (level === 'variant') { dlVariant.value = value }
+async function loadIncusList() {
   dlBrowsing.value = true
   dlItems.value = []
   try {
@@ -143,6 +139,14 @@ async function browseIncus(level: string, value: string) {
   } catch (e) { toast.error(errorMessage(e)) } finally { dlBrowsing.value = false }
 }
 
+async function browseIncus(level: string, value: string) {
+  if (level === 'distro') { dlDistro.value = value; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = '' }
+  if (level === 'release') { dlRelease.value = value; dlArch.value = ''; dlVariant.value = '' }
+  if (level === 'arch') { dlArch.value = value; dlVariant.value = '' }
+  if (level === 'variant') { dlVariant.value = value }
+  await loadIncusList()
+}
+
 function resetDownload() {
   dlUrl.value = ''; dlName.value = ''; dlExtraUrl.value = ''
   dlDistro.value = ''; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = ''; dlItems.value = []
@@ -150,7 +154,9 @@ function resetDownload() {
 
 /** 切换驱动时只清浏览状态，不能把 dlDriver 也重置（否则永远切不过去）。 */
 function switchDownloadDriver() {
-  dlDistro.value = ''; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = ''; dlItems.value = []
+  dlDistro.value = ''; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = ''
+  // Incus 源需要立即拉取发行版列表，否则面板是空的。
+  if (dlDriver.value === 'incus') loadIncusList()
 }
 
 async function downloadPreset(item: { name?: string; url?: string; extra_url?: string; os_type?: string; os_version?: string; arch?: string }) {
