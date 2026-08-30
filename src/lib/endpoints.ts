@@ -125,6 +125,20 @@ export const virtualisApi = {
     return data
   },
   imageDownloadUrl(id: number) { return `/api/images/${id}/download` },
+
+  async imagePresets(params: { driver: string; distro?: string; release?: string; arch?: string; variant?: string }) {
+    const qs = new URLSearchParams({ driver: params.driver })
+    for (const k of ['distro', 'release', 'arch', 'variant'] as const) {
+      if ((params as any)[k]) qs.set(k, (params as any)[k])
+    }
+    const { data } = await http.get<{ items?: Array<{ name: string; display_name?: string; url?: string; extra_url?: string; os_type?: string; os_version?: string; arch?: string; note?: string }>; build?: string }>(`/images/presets?${qs}`)
+    return data
+  },
+
+  async downloadImage(payload: { name: string; driver: string; type: string; url: string; extra_url?: string; os_type?: string; os_version?: string; arch?: string }) {
+    const { data } = await http.post<VirtualisImage>('/images/download', payload)
+    return data
+  },
   async deleteImage(id: number) { await http.delete(`/images/${id}`) },
 }
 
