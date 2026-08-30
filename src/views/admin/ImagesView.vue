@@ -144,7 +144,12 @@ async function browseIncus(level: string, value: string) {
 }
 
 function resetDownload() {
-  dlDriver.value = 'qemu'; dlUrl.value = ''; dlName.value = ''; dlExtraUrl.value = ''
+  dlUrl.value = ''; dlName.value = ''; dlExtraUrl.value = ''
+  dlDistro.value = ''; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = ''; dlItems.value = []
+}
+
+/** 切换驱动时只清浏览状态，不能把 dlDriver 也重置（否则永远切不过去）。 */
+function switchDownloadDriver() {
   dlDistro.value = ''; dlRelease.value = ''; dlArch.value = ''; dlVariant.value = ''; dlItems.value = []
 }
 
@@ -298,7 +303,7 @@ onMounted(() => {
         <div class="space-y-4">
           <div class="grid gap-2">
             <Label>驱动 *</Label>
-            <Select v-model="dlDriver" @update:model-value="resetDownload()">
+            <Select v-model="dlDriver" @update:model-value="switchDownloadDriver">
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="qemu">qemu（魔方云预设）</SelectItem>
@@ -342,7 +347,7 @@ onMounted(() => {
             </div>
             <p v-if="dlDistro" class="text-xs text-muted-foreground">
               已选：{{ [dlDistro, dlRelease, dlArch, dlVariant].filter(Boolean).join(' / ') }}
-              <button class="underline ml-2" @click="resetDownload(); dlDriver='incus'">重新选择</button>
+              <button class="underline ml-2" @click="switchDownloadDriver">重新选择</button>
             </p>
           </template>
 
