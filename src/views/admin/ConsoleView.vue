@@ -39,7 +39,6 @@ async function connect() {
     rfb = new RFB(vncTarget.value, webURL)
     rfb.scaleViewport = true
     rfb.resizeSession = false
-    rfb.background = '#000'
     rfb.addEventListener('connect', () => {
       connected.value = true
       connecting.value = false
