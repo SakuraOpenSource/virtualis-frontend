@@ -13,6 +13,8 @@ declare module 'vue-router' {
 const routes: RouteRecordRaw[] = [
   { path: '/install', name: 'install', component: () => import('@/views/InstallView.vue'), meta: { installPage: true } },
   { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { guestOnly: true } },
+  // 全屏 VNC 控制台：新窗口打开，脱离后台布局。
+  { path: '/admin/instances/:id/console', name: 'instance-console', component: () => import('@/views/admin/ConsoleView.vue'), props: true, meta: { requiresAuth: true } },
   {
     path: '/',
     redirect: '/admin/instances',

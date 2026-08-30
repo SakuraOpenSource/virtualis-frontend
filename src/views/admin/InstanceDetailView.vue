@@ -185,6 +185,11 @@ function disconnectVNC() {
   consoleOpen.value = false
 }
 
+/** 全屏控制台：新窗口里独立连接（内嵌窗口保留）。 */
+function openConsoleWindow() {
+  window.open(`/admin/instances/${id}/console`, '_blank', 'width=1280,height=820')
+}
+
 async function copy(value: string) {
   try { await navigator.clipboard.writeText(value); toast.success('已复制') } catch { toast.error('复制失败，请手动复制') }
 }
@@ -380,11 +385,11 @@ onBeforeUnmount(() => {
       </div>
 
       <Card>
-        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>VNC 连接</CardTitle><CardDescription>通过主控内置 WebSocket 代理使用 noVNC，浏览器无需安装 VNC 客户端</CardDescription></div><div class="flex gap-2"><Button :disabled="vncLoading" @click="loadVNC">{{ vncLoading ? '连接中...' : consoleOpen ? '重连 VNC' : '连接 VNC' }}</Button><Button v-if="consoleOpen" variant="outline" @click="disconnectVNC">断开</Button><Badge v-if="vncConnected" variant="outline">已连接</Badge><Badge v-else-if="consoleOpen" variant="outline">未连接</Badge></div></div></CardHeader>
+        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>VNC 连接</CardTitle><CardDescription>通过主控内置 WebSocket 代理使用 noVNC，浏览器无需安装 VNC 客户端</CardDescription></div><div class="flex gap-2"><Button :disabled="vncLoading" @click="loadVNC">{{ vncLoading ? '连接中...' : consoleOpen ? '重连 VNC' : '连接 VNC' }}</Button><Button variant="outline" @click="openConsoleWindow">新窗口打开</Button><Button v-if="consoleOpen" variant="outline" @click="disconnectVNC">断开</Button><Badge v-if="vncConnected" variant="outline">已连接</Badge><Badge v-else-if="consoleOpen" variant="outline">未连接</Badge></div></div></CardHeader>
         <CardContent>
           <div v-if="consoleOpen" ref="vncTarget" class="h-[420px] w-full overflow-hidden rounded-md bg-black" />
           <div v-else-if="vnc?.available" class="space-y-3"><div class="flex flex-wrap items-center gap-2"><code class="rounded border bg-muted px-3 py-2 text-sm">{{ vnc.url }}</code><Button variant="outline" size="sm" @click="copy(vnc.url || '')">复制</Button></div><p class="text-xs text-muted-foreground">主机：{{ vnc.host }}，端口：{{ vnc.port }}，显示：{{ vnc.display }}。也可以使用桌面 VNC 客户端连接。</p></div>
-          <p v-else class="text-sm text-muted-foreground">{{ vnc?.message || '尚未获取 VNC 信息。QEMU 实例创建时会自动启用 VNC；LXC、Mock 不提供 VNC。' }}</p>
+          <p v-else class="text-sm text-muted-foreground">{{ vnc?.message || '尚未获取 VNC 信息。QEMU 实例创建时自动启用 VNC；容器实例需要宿主安装 xvfb、x11vnc、xterm。' }}</p>
         </CardContent>
       </Card>
 
