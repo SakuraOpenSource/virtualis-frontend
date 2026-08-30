@@ -229,7 +229,7 @@ onMounted(async () => { await load(); await loadMeta() })
     <Pager :page="page" :pageSize="pageSize" :total="total" @update:page="(v:number)=>{ page=v; load() }" />
 
     <Dialog :open="showCreate" @update:open="(v:boolean)=> showCreate=v">
-      <DialogContent class="max-w-2xl">
+      <DialogContent class="max-h-[88vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>创建实例</DialogTitle>
           <DialogDescription>必须先选择被控节点，驱动与镜像选项由该节点的实际能力决定</DialogDescription>
