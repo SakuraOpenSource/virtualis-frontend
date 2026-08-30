@@ -34,7 +34,7 @@ const vAllowReinstall = ref(true)
 const vAutoRefresh = ref(true)
 const drivers = ref<VirtualisDriver[]>([])
 
-const driverNames = ['auto', 'incus', 'qemu', 'lxc']
+const driverNames = ['auto', 'incus', 'qemu']
 
 function driverAvailable(name: string) {
   if (name === 'auto') return drivers.value.some((driver) => driver.available)

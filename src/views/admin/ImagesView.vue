@@ -33,7 +33,6 @@ const fileRef = ref<File | null>(null)
 const driverOptions = [
   { value: 'qemu', label: 'qemu' },
   { value: 'incus', label: 'incus' },
-  { value: 'lxc', label: 'lxc' },
 ]
 
 const typeOptions: Array<{ value: 'disk' | 'iso'; label: string; desc: string }> = [
@@ -62,8 +61,8 @@ async function load() {
 async function upload() {
   if (!fileRef.value) { toast.error('请选择镜像文件'); return }
   if (!formDriver.value) { toast.error('请选择驱动'); return }
-  if (formType.value === 'iso' && formDriver.value === 'lxc') {
-    toast.error('LXC 不支持 ISO 镜像，请选择磁盘镜像或切换驱动')
+  if (formType.value === 'iso' && formDriver.value === 'incus') {
+    toast.error('容器不支持 ISO 镜像，请选择磁盘镜像或切换驱动')
     return
   }
   creating.value=true

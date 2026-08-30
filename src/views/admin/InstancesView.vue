@@ -66,8 +66,7 @@ const driverItems = computed(() => {
     { value: 'auto', label: 'auto（自动选择该节点可用驱动）' },
     { value: 'incus', label: 'incus' },
     { value: 'qemu', label: 'qemu' },
-    { value: 'lxc', label: 'lxc' },
-  ]
+    ]
   if (!selectedAgent.value) return base.map(b => ({ ...b, disabled: true, hint: '请先选择被控节点' }))
   if (!availableDriversForAgent.value.length) return base.map(b => ({ ...b, disabled: true, hint: '该节点未上报可用驱动' }))
   return base.map(item => {
