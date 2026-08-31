@@ -286,6 +286,10 @@ onBeforeUnmount(() => {
           <div><span class="text-muted-foreground">规格：</span>{{ inst.spec.cpu }}C / {{ inst.spec.memory_mb }}MB / {{ inst.spec.disk_gb }}GB</div>
           <div><span class="text-muted-foreground">镜像：</span>{{ inst.image?.name ?? inst.image_id ?? '-' }}</div>
           <div><span class="text-muted-foreground">网络：</span>{{ inst.network?.mode || 'nat' }}{{ inst.network?.bridge ? ` / ${inst.network.bridge}` : '' }}</div>
+          <div><span class="text-muted-foreground">配置 IPv4：</span>{{ inst.ip || inst.network?.ipv4 || '-' }}</div>
+          <div><span class="text-muted-foreground">观测 IPv4：</span>{{ inst.observed_ip || '-' }}</div>
+          <div><span class="text-muted-foreground">SSH：</span><Badge :variant="inst.ssh_ready ? 'default' : 'outline'">{{ inst.ssh_ready ? '已就绪' : '未确认' }}</Badge></div>
+          <div v-if="inst.network_error" class="text-destructive sm:col-span-2 lg:col-span-3"><span class="text-muted-foreground">网络错误：</span>{{ inst.network_error }}</div>
           <div><span class="text-muted-foreground">创建：</span>{{ formatDateTime(inst.created_at) }}</div>
           <div><span class="text-muted-foreground">更新：</span>{{ formatDateTime(inst.updated_at) }}</div>
         </CardContent>
