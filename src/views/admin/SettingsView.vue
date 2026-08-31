@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { adminApi, virtualisApi } from '@/lib/endpoints'
+import { adminApi, agentApi, virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import PageHeader from '@/components/app/PageHeader.vue'
@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import type { VirtualisDriver } from '@/lib/types'
+import type { VirtualisDriver, VirtualisAgent, HostInterface } from '@/lib/types'
 
 const toast = useToast()
 const loading = ref(false)
@@ -32,7 +32,12 @@ const vDisk = ref(20)
 const vArch = ref('x86_64')
 const vAllowReinstall = ref(true)
 const vAutoRefresh = ref(true)
+const vDefaultNIC = ref('')
 const drivers = ref<VirtualisDriver[]>([])
+const agents = ref<VirtualisAgent[]>([])
+const selectedAgent = ref('')
+const hostIfaces = ref<HostInterface[]>([])
+const hostNetworkLoading = ref(false)
 
 const driverNames = ['auto', 'incus', 'qemu']
 
@@ -50,11 +55,25 @@ function driverLabel(name: string) {
 const capLogin = ref(false)
 const capRegister = ref(false)
 
+async function loadAgentNetwork() {
+  hostIfaces.value = []
+  if (!selectedAgent.value) return
+  hostNetworkLoading.value = true
+  try {
+    const summary = await agentApi.hostNetwork(Number(selectedAgent.value))
+    hostIfaces.value = summary.interfaces ?? []
+  } catch (e) {
+    toast.error(errorMessage(e))
+  } finally {
+    hostNetworkLoading.value = false
+  }
+}
+
 async function loadAll() {
   loading.value=true
   error.value=''
   try {
-    const [site, virt, cap, driverList] = await Promise.all([adminApi.site(), adminApi.virtualis(), adminApi.captcha(), virtualisApi.drivers()])
+    const [site, virt, cap, driverList, agentList] = await Promise.all([adminApi.site(), adminApi.virtualis(), adminApi.captcha(), virtualisApi.drivers(), agentApi.list()])
     siteName.value = site.name
     siteDesc.value = site.description
     vDriver.value = virt.default_driver
@@ -65,6 +84,10 @@ async function loadAll() {
     vAllowReinstall.value = virt.allow_reinstall
     vAutoRefresh.value = virt.auto_refresh
     drivers.value = driverList
+    agents.value = agentList
+    vDefaultNIC.value = virt.default_network_interface || ''
+    selectedAgent.value = agentList[0] ? String(agentList[0].id) : ''
+    await loadAgentNetwork()
     capLogin.value = cap.login_enabled
     capRegister.value = cap.register_enabled
   } catch (e) { error.value = errorMessage(e) } finally { loading.value=false }
@@ -77,7 +100,7 @@ async function saveSite() {
 async function saveVirt() {
   saving.value='virt'
   try {
-    await adminApi.updateVirtualis({ default_driver: vDriver.value, default_cpu: vCpu.value, default_memory: vMem.value, default_disk: vDisk.value, default_arch: vArch.value, allow_reinstall: vAllowReinstall.value, auto_refresh: vAutoRefresh.value })
+    await adminApi.updateVirtualis({ default_driver: vDriver.value, default_cpu: vCpu.value, default_memory: vMem.value, default_disk: vDisk.value, default_arch: vArch.value, allow_reinstall: vAllowReinstall.value, auto_refresh: vAutoRefresh.value, default_network_interface: vDefaultNIC.value })
     toast.success('虚拟化设置已保存')
   } catch (e) { toast.error(errorMessage(e)) } finally { saving.value='' }
 }
@@ -123,6 +146,17 @@ onMounted(loadAll)
                 </SelectContent>
               </Select>
               <p class="text-xs text-muted-foreground">驱动安装在被控节点上，未安装的驱动不可选。</p>
+            </div>
+            <div class="grid gap-2">
+              <Label>默认网卡</Label>
+              <Select v-model="vDefaultNIC" :disabled="hostNetworkLoading || !hostIfaces.length">
+                <SelectTrigger><SelectValue :placeholder="hostNetworkLoading ? '自动查找中...' : '自动选择'" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="">自动选择（推荐）</SelectItem>
+                  <SelectItem v-for="iface in hostIfaces" :key="iface.name" :value="iface.name">{{ iface.name }}（{{ iface.kind }}{{ iface.ipv4?.length ? ` · ${iface.ipv4.join(', ')}` : '' }}）</SelectItem>
+                </SelectContent>
+              </Select>
+              <p class="text-xs text-muted-foreground">只用于独立 IP 模式；检测节点：{{ agents.find((a) => String(a.id) === selectedAgent)?.display_name || agents.find((a) => String(a.id) === selectedAgent)?.name || '未选择' }}</p>
             </div>
             <div class="grid gap-2">
               <Label>默认架构</Label>

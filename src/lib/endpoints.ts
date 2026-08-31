@@ -4,7 +4,8 @@ import type {
   Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver, InstanceMetrics, NetworkStatus, VNCInfo, NetworkConfig,
   VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest,
   HostNetworkSummary,
-  NATMapping
+  NATMapping,
+  InstanceOperationLog
 } from './types'
 
 interface PageQuery { page?: number; page_size?: number }
@@ -100,6 +101,17 @@ export const virtualisApi = {
   async network(id: number) {
     const { data } = await http.get<{ network: NetworkStatus }>(`/instances/${id}/network`)
     return data.network
+  },
+  async configureNetwork(id: number, network?: NetworkConfig) {
+    const { data } = await http.post<{ instance: VirtualisInstance; operation_id: string }>(
+      `/instances/${id}/network/configure`,
+      { network: network ?? {} },
+    )
+    return data
+  },
+  async operationLogs(id: number, query: PageQuery = {}) {
+    const { data } = await http.get<Page<InstanceOperationLog>>(`/instances/${id}/logs`, { params: query })
+    return data
   },
   async vnc(id: number) {
     const { data } = await http.get<{ vnc: VNCInfo }>(`/instances/${id}/vnc`)

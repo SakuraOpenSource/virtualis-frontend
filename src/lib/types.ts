@@ -68,6 +68,20 @@ export interface VirtualisSettings {
   default_arch: string
   allow_reinstall: boolean
   auto_refresh: boolean
+  default_network_interface: string
+}
+
+export interface InstanceOperationLog {
+  id: number
+  instance_id: number
+  operation_id: string
+  action: string
+  stage: string
+  status: string
+  message: string
+  error?: string
+  created_at: string
+  updated_at: string
 }
 
 export interface InstanceSpec {
@@ -114,6 +128,10 @@ export interface VirtualisInstance {
   max_nat_mappings?: number
   nat_mappings?: NATMapping[]
   ssh_password?: string
+  ip?: string
+  observed_ip?: string
+  ssh_ready?: boolean
+  network_error?: string
   created_at: string
   updated_at: string
 }

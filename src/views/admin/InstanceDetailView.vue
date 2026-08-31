@@ -5,7 +5,7 @@ import RFB from '@novnc/novnc'
 import { virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
-import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance } from '@/lib/types'
+import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance, InstanceOperationLog, NetworkConfig } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
@@ -45,6 +45,10 @@ const natForm = ref({ protocol: 'tcp', guest_port: '', host_port: '', remark: ''
 const natBusy = ref(false)
 const showPassword = ref(false)
 const passwordBusy = ref(false)
+const configureBusy = ref(false)
+const operationLogs = ref<InstanceOperationLog[]>([])
+const logsLoading = ref(false)
+const networkForm = ref<NetworkConfig>({ mode: 'nat' })
 
 const sshMapping = computed(() => natMappings.value.find(m => m.guest_port === 22 && m.protocol === 'tcp') ?? null)
 const sshHost = computed(() => inst.value?.agent?.ip || inst.value?.agent?.endpoint?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') || '')
@@ -122,7 +126,7 @@ function formatRate(value: number) {
 async function load() {
   loading.value=true
   error.value=''
-  try { inst.value = await virtualisApi.instance(id) } catch (e) { error.value=errorMessage(e) } finally { loading.value=false }
+  try { inst.value = await virtualisApi.instance(id); if (inst.value.network) networkForm.value = { ...inst.value.network } } catch (e) { error.value=errorMessage(e) } finally { loading.value=false }
 }
 
 async function loadImages() {
@@ -143,8 +147,36 @@ async function checkNetwork() {
   networkLoading.value = true
   try {
     network.value = await virtualisApi.network(id)
+    const observed = network.value.interfaces?.flatMap((item) => item.ipv4 ?? []).find((item) => item && item !== '127.0.0.1')
+    if (inst.value && observed) {
+      inst.value.observed_ip = observed.split('/')[0]
+      inst.value.ip = inst.value.observed_ip
+    }
     toast.success(network.value.reachable ? '网络检测通过' : '网络检测未通过')
   } catch (e) { toast.error(errorMessage(e)) } finally { networkLoading.value = false }
+}
+
+async function loadLogs() {
+  logsLoading.value = true
+  try {
+    const page = await virtualisApi.operationLogs(id, { page: 1, page_size: 50 })
+    operationLogs.value = page.items ?? []
+  } catch (e) { toast.error(errorMessage(e)) } finally { logsLoading.value = false }
+}
+
+async function configureNetwork() {
+  if (!confirm('将重新配置实例网络，并重新初始化 SSH/NAT。运行中的实例可能会重启，继续吗？')) return
+  configureBusy.value = true
+  try {
+    const result = await virtualisApi.configureNetwork(id, networkForm.value)
+    inst.value = result.instance
+    natMappings.value = result.instance.nat_mappings ?? natMappings.value
+    await Promise.all([refreshTelemetry(), loadLogs()])
+    toast.success(`网络配置完成（操作 ${result.operation_id}）`)
+  } catch (e) {
+    await loadLogs()
+    toast.error(errorMessage(e))
+  } finally { configureBusy.value = false }
 }
 
 async function loadVNC() {
@@ -221,7 +253,7 @@ async function del() {
 
 onMounted(async () => {
   await load()
-  await Promise.all([loadImages(), refreshTelemetry()])
+  await Promise.all([loadImages(), refreshTelemetry(), loadLogs()])
   telemetryTimer = setInterval(() => refreshTelemetry(), 10000)
   await loadNAT()
 })
@@ -367,7 +399,7 @@ onBeforeUnmount(() => {
 
         <Card>
           <CardHeader>
-            <div class="flex items-center justify-between gap-3"><div><CardTitle>网络检测</CardTitle><CardDescription>检查被控节点可见的实例网卡与外部连通性</CardDescription></div><Button variant="outline" size="sm" :disabled="networkLoading" @click="checkNetwork">{{ networkLoading ? '检测中...' : '检测网络' }}</Button></div>
+            <div class="flex items-center justify-between gap-3"><div><CardTitle>网络检测</CardTitle><CardDescription>检查被控节点可见的实例网卡与外部连通性</CardDescription></div><div class="flex gap-2"><Button variant="outline" size="sm" :disabled="networkLoading" @click="checkNetwork">{{ networkLoading ? '检测中...' : '检测网络' }}</Button><Button size="sm" :disabled="configureBusy" @click="configureNetwork">{{ configureBusy ? '配置中...' : '配置网络' }}</Button></div></div>
           </CardHeader>
           <CardContent class="space-y-4">
             <div v-if="network" class="flex items-center gap-2 text-sm"><Badge :variant="network.reachable ? 'default' : 'destructive' as any">{{ network.reachable ? '网络正常' : '网络异常' }}</Badge><span v-if="network.latency_ms">延迟 {{ network.latency_ms.toFixed(1) }} ms</span></div>
@@ -390,6 +422,16 @@ onBeforeUnmount(() => {
           <div v-if="consoleOpen" ref="vncTarget" class="h-[420px] w-full overflow-hidden rounded-md bg-black" />
           <div v-else-if="vnc?.available" class="space-y-3"><div class="flex flex-wrap items-center gap-2"><code class="rounded border bg-muted px-3 py-2 text-sm">{{ vnc.url }}</code><Button variant="outline" size="sm" @click="copy(vnc.url || '')">复制</Button></div><p class="text-xs text-muted-foreground">主机：{{ vnc.host }}，端口：{{ vnc.port }}，显示：{{ vnc.display }}。也可以使用桌面 VNC 客户端连接。</p></div>
           <p v-else class="text-sm text-muted-foreground">{{ vnc?.message || '尚未获取 VNC 信息。QEMU 实例创建时自动启用 VNC；容器实例需要宿主安装 xvfb、x11vnc、xterm。' }}</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>操作日志</CardTitle><CardDescription>创建、电源、网络配置和错误记录</CardDescription></div><Button variant="outline" size="sm" :disabled="logsLoading" @click="loadLogs">{{ logsLoading ? '刷新中...' : '刷新日志' }}</Button></div></CardHeader>
+        <CardContent>
+          <div v-if="operationLogs.length" class="overflow-x-auto rounded-md border">
+            <table class="w-full text-sm"><thead><tr class="border-b text-left"><th class="px-3 py-2">时间</th><th class="px-3 py-2">操作</th><th class="px-3 py-2">阶段</th><th class="px-3 py-2">状态</th><th class="px-3 py-2">说明</th></tr></thead><tbody><tr v-for="log in operationLogs" :key="log.id" class="border-b last:border-0"><td class="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">{{ formatDateTime(log.created_at) }}</td><td class="px-3 py-2">{{ log.action }}</td><td class="px-3 py-2">{{ log.stage }}</td><td class="px-3 py-2"><Badge :variant="log.status === 'failed' ? 'destructive' : log.status === 'success' ? 'default' : 'outline' as any">{{ log.status }}</Badge></td><td class="max-w-md px-3 py-2 break-words">{{ log.error || log.message || '-' }}</td></tr></tbody></table>
+          </div>
+          <p v-else class="text-sm text-muted-foreground">暂无操作日志。</p>
         </CardContent>
       </Card>
 
