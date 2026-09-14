@@ -7,6 +7,7 @@ import type { VirtualisImage } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
+import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +23,8 @@ const error = ref('')
 const images = ref<VirtualisImage[]>([])
 const show = ref(false)
 const creating = ref(false)
+const confirmDeleteOpen = ref(false)
+const pendingDeleteId = ref<number | null>(null)
 const formName = ref('')
 const formDriver = ref('qemu')
 const formType = ref<'disk' | 'iso'>('disk')
@@ -97,9 +100,15 @@ async function upload() {
   } catch (e) { toast.error(errorMessage(e)) } finally { creating.value=false }
 }
 
-async function del(id: number) {
-  if (!confirm('确认删除该镜像？被实例引用时无法删除。')) return
-  try { await virtualisApi.deleteImage(id); toast.success('已删除'); await load() } catch (e) { toast.error(errorMessage(e)) }
+function del(id: number) {
+  pendingDeleteId.value = id
+  confirmDeleteOpen.value = true
+}
+
+async function doDelete() {
+  if (pendingDeleteId.value === null) return
+  confirmDeleteOpen.value = false
+  try { await virtualisApi.deleteImage(pendingDeleteId.value); toast.success('已删除'); await load() } catch (e) { toast.error(errorMessage(e)) }
 }
 
 // ===== 镜像下载（预设源）=====
@@ -370,5 +379,6 @@ onMounted(() => {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteImageTitle')" :description="$t('confirm.deleteImageDesc')" danger @confirm="doDelete" />
   </div>
 </template>

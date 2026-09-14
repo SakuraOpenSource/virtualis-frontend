@@ -9,6 +9,7 @@ import type { VirtualisDriver, VirtualisInstance } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
+import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
 import Pager from '@/components/app/Pager.vue'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -27,6 +28,8 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const showCreate = ref(false)
+const confirmDeleteOpen = ref(false)
+const pendingDeleteId = ref<number | null>(null)
 const creating = ref(false)
 
 const formName = ref('')
@@ -157,9 +160,15 @@ async function create() {
   } catch (e) { toast.error(errorMessage(e)) } finally { creating.value=false }
 }
 
-async function removeItem(id: number) {
-  if (!confirm('确认删除该实例？会同时在被控节点上销毁对应资源。')) return
-  try { await virtualisApi.deleteInstance(id); toast.success('已删除'); await load() } catch (e) { toast.error(errorMessage(e)) }
+function removeItem(id: number) {
+  pendingDeleteId.value = id
+  confirmDeleteOpen.value = true
+}
+
+async function doRemoveItem() {
+  if (pendingDeleteId.value === null) return
+  confirmDeleteOpen.value = false
+  try { await virtualisApi.deleteInstance(pendingDeleteId.value); toast.success('已删除'); await load() } catch (e) { toast.error(errorMessage(e)) }
 }
 
 function statusVariant(s: string) {
@@ -333,5 +342,6 @@ onMounted(async () => { await load(); await loadMeta() })
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doRemoveItem" />
   </div>
 </template>

@@ -9,6 +9,7 @@ import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImag
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
+import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -49,6 +50,12 @@ const configureBusy = ref(false)
 const operationLogs = ref<InstanceOperationLog[]>([])
 const logsLoading = ref(false)
 const networkForm = ref<NetworkConfig>({ mode: 'nat' })
+// 确认框状态：原生 confirm 已迁移到 ConfirmDialog。
+const confirmNatOpen = ref(false)
+const pendingNatId = ref<number | null>(null)
+const confirmPasswordOpen = ref(false)
+const confirmNetworkOpen = ref(false)
+const confirmDeleteOpen = ref(false)
 
 const sshMapping = computed(() => natMappings.value.find(m => m.guest_port === 22 && m.protocol === 'tcp') ?? null)
 const sshHost = computed(() => inst.value?.agent?.ip || inst.value?.agent?.endpoint?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') || '')
@@ -80,18 +87,29 @@ async function addNAT() {
 }
 
 async function removeNAT(mappingId?: number) {
-  if (!mappingId || !confirm('确认删除该端口映射？')) return
+  if (!mappingId) return
+  pendingNatId.value = mappingId
+  confirmNatOpen.value = true
+}
+
+async function doRemoveNAT() {
+  if (!pendingNatId.value) return
+  confirmNatOpen.value = false
   natBusy.value = true
   try {
-    await virtualisApi.deleteNATMapping(id, mappingId)
+    await virtualisApi.deleteNATMapping(id, pendingNatId.value)
     toast.success('映射已删除')
     await loadNAT()
   } catch (e) { toast.error(errorMessage(e)) } finally { natBusy.value = false }
 }
 
-async function rotatePassword() {
+function rotatePassword() {
+  confirmPasswordOpen.value = true
+}
+
+async function doRotatePassword() {
+  confirmPasswordOpen.value = false
   const password = generatePassword()
-  if (!confirm('生成新的 root 密码并注入实例？旧密码将失效。')) return
   passwordBusy.value = true
   try {
     const updated = await virtualisApi.setPassword(id, password)
@@ -101,6 +119,7 @@ async function rotatePassword() {
     toast.success('密码已更新，运行中的实例会自动注入')
   } catch (e) { toast.error(errorMessage(e)) } finally { passwordBusy.value = false }
 }
+
 
 function generatePassword(len = 16) {
   const charset = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -164,8 +183,12 @@ async function loadLogs() {
   } catch (e) { toast.error(errorMessage(e)) } finally { logsLoading.value = false }
 }
 
-async function configureNetwork() {
-  if (!confirm('将重新配置实例网络，并重新初始化 SSH/NAT。运行中的实例可能会重启，继续吗？')) return
+function configureNetwork() {
+  confirmNetworkOpen.value = true
+}
+
+async function doConfigureNetwork() {
+  confirmNetworkOpen.value = false
   configureBusy.value = true
   try {
     const result = await virtualisApi.configureNetwork(id, networkForm.value)
@@ -246,8 +269,12 @@ async function refreshStatus() {
   } catch (e) { toast.error(errorMessage(e)) } finally { actionLoading.value='' }
 }
 
-async function del() {
-  if (!confirm('确认删除？会同时销毁被控节点上的资源。')) return
+function del() {
+  confirmDeleteOpen.value = true
+}
+
+async function doDelete() {
+  confirmDeleteOpen.value = false
   try { await virtualisApi.deleteInstance(id); toast.success('已删除'); router.push({ name: 'instances' }) } catch (e) { toast.error(errorMessage(e)) }
 }
 
@@ -448,5 +475,9 @@ onBeforeUnmount(() => {
         </CardContent>
       </Card>
     </div>
+    <ConfirmDialog :open="confirmNatOpen" @update:open="(v:boolean)=> confirmNatOpen=v" :title="$t('confirm.deleteNatTitle')" :description="$t('confirm.deleteNatDesc')" danger @confirm="doRemoveNAT" />
+    <ConfirmDialog :open="confirmPasswordOpen" @update:open="(v:boolean)=> confirmPasswordOpen=v" :title="$t('confirm.rotatePasswordTitle')" :description="$t('confirm.rotatePasswordDesc')" danger @confirm="doRotatePassword" />
+    <ConfirmDialog :open="confirmNetworkOpen" @update:open="(v:boolean)=> confirmNetworkOpen=v" :title="$t('confirm.configureNetworkTitle')" :description="$t('confirm.configureNetworkDesc')" danger @confirm="doConfigureNetwork" />
+    <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doDelete" />
   </div>
 </template>

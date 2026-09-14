@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { Copy, Plus, Trash2, Check, Download, RefreshCw } from 'lucide-vue-next'
 
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
+import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import PageHeader from '@/components/app/PageHeader.vue'
 import { Badge } from '@/components/ui/badge'
@@ -28,6 +29,10 @@ const joinCmd = ref('')
 const curlCmd = ref('')
 const downloads = ref<AgentDownload[]>([])
 const copied = ref(false)
+const confirmDeleteOpen = ref(false)
+const pendingDeleteId = ref<number | null>(null)
+const confirmRotateOpen = ref(false)
+const pendingRotateAgent = ref<VirtualisAgent | null>(null)
 
 async function load() {
   loading.value = true
@@ -62,10 +67,16 @@ async function create() {
   }
 }
 
-async function remove(id: number) {
-  if (!confirm('确认删除该被控？删除后它的 token 将立即失效。')) return
+function remove(id: number) {
+  pendingDeleteId.value = id
+  confirmDeleteOpen.value = true
+}
+
+async function doRemove() {
+  if (pendingDeleteId.value === null) return
+  confirmDeleteOpen.value = false
   try {
-    await agentApi.remove(id)
+    await agentApi.remove(pendingDeleteId.value)
     toast.success('已删除')
     await load()
   } catch (e) {
@@ -73,10 +84,16 @@ async function remove(id: number) {
   }
 }
 
-async function rotateToken(agent: VirtualisAgent) {
-  if (!confirm(`确认重新生成“${agent.display_name || agent.name}”的 token？旧 token 会立即失效。`)) return
+function rotateToken(agent: VirtualisAgent) {
+  pendingRotateAgent.value = agent
+  confirmRotateOpen.value = true
+}
+
+async function doRotateToken() {
+  if (!pendingRotateAgent.value) return
+  confirmRotateOpen.value = false
   try {
-    const data = await agentApi.rotateToken(agent.id)
+    const data = await agentApi.rotateToken(pendingRotateAgent.value.id)
     joinCmd.value = data.join_cmd
     curlCmd.value = data.curl_cmd
     downloads.value = data.downloads ?? []
@@ -173,5 +190,7 @@ onMounted(load)
         </div>
       </DialogContent>
     </Dialog>
+    <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteAgentTitle')" :description="$t('confirm.deleteAgentDesc')" danger @confirm="doRemove" />
+    <ConfirmDialog :open="confirmRotateOpen" @update:open="(v:boolean)=> confirmRotateOpen=v" :title="$t('confirm.rotateAgentTokenTitle')" :description="$t('confirm.rotateAgentTokenDesc', { name: pendingRotateAgent?.display_name || pendingRotateAgent?.name || '' })" danger @confirm="doRotateToken" />
   </div>
 </template>

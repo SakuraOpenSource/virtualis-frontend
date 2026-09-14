@@ -7,6 +7,7 @@ import type { APIKey } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
+import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -18,6 +19,7 @@ const creating = ref(false)
 const error = ref('')
 const key = ref<APIKey | null>(null)
 const createdSecret = ref('')
+const confirmRevokeOpen = ref(false)
 const active = computed(() => key.value?.status === 'active')
 
 async function load() {
@@ -47,8 +49,14 @@ async function create() {
   }
 }
 
-async function revoke() {
-  if (!key.value || !confirm('确认吊销全站 API 密钥？吊销后所有 API 调用都会失效。')) return
+function revoke() {
+  if (!key.value) return
+  confirmRevokeOpen.value = true
+}
+
+async function doRevoke() {
+  if (!key.value) return
+  confirmRevokeOpen.value = false
   try {
     await apiKeyApi.revoke(key.value.id)
     toast.success('全站 API 密钥已吊销')
@@ -118,5 +126,6 @@ onMounted(load)
         </div>
       </CardContent>
     </Card>
+    <ConfirmDialog :open="confirmRevokeOpen" @update:open="(v:boolean)=> confirmRevokeOpen=v" :title="$t('confirm.revokeApiKeyTitle')" :description="$t('confirm.revokeApiKeyDesc')" danger @confirm="doRevoke" />
   </div>
 </template>

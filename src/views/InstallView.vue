@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import { siteApi } from '@/lib/endpoints'
 import { useSiteStore } from '@/stores/site'
 import { errorMessage } from '@/lib/api'
+import { useToast } from '@/composables/useToast'
+import { useI18n } from 'vue-i18n'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -14,6 +16,8 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@
 
 const router = useRouter()
 const site = useSiteStore()
+const toast = useToast()
+const { t } = useI18n()
 const loading = ref(false)
 const error = ref('')
 const dbDriver = ref<'sqlite'|'mysql'|'postgres'>('sqlite')
@@ -41,7 +45,7 @@ async function testDb() {
     else { cfg.host=dbHost.value; cfg.port=dbPort.value; cfg.user=dbUser.value; cfg.password=dbPass.value; cfg.name=dbName.value }
     await siteApi.testDatabase(cfg)
     error.value = ''
-    alert('数据库连接成功')
+    toast.success(t('install.dbTestSuccess'))
   } catch (e) { error.value = errorMessage(e) }
 }
 
