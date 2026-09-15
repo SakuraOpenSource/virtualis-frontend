@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { formatDateTime } from '@/lib/utils'
+import { cpuLabel, formatDateTime } from '@/lib/utils'
 
 const toast = useToast()
 const loading = ref(false)
@@ -129,9 +129,17 @@ watch(filteredImages, () => {
   }
 })
 
+// CPU 输入兼容小数核数（如 0.5）：保留 3 位小数精度，提交时换算为毫核。
+function parseCpu(value: string) {
+  const cpu = parseFloat(value)
+  formCpu.value = !isNaN(cpu) && cpu > 0 ? Math.round(cpu * 1000) / 1000 : 1
+}
+
 async function create() {
   if (!formName.value.trim()) { toast.error('请输入名称'); return }
   if (!formAgentId.value) { toast.error('请选择被控节点（主控不负责创建实例）'); return }
+  // CPU 支持小数：整数核只发 cpu；小数核换算为毫核，cpu 存向上取整的核数。
+  const cpuMilli = Number.isInteger(formCpu.value) ? undefined : Math.round(formCpu.value * 1000)
   creating.value = true
   try {
     await virtualisApi.createInstance({
@@ -139,7 +147,7 @@ async function create() {
       agent_id: parseInt(formAgentId.value),
       driver: formDriver.value,
       type: formType.value,
-      spec: { cpu: formCpu.value, memory_mb: formMem.value, disk_gb: formDisk.value, arch: formArch.value },
+      spec: { cpu: Math.ceil(formCpu.value), cpu_milli: cpuMilli, memory_mb: formMem.value, disk_gb: formDisk.value, arch: formArch.value },
       network: {
         mode: formNetworkMode.value,
         bridge: formBridge.value.trim() || undefined,
@@ -218,7 +226,7 @@ onMounted(async () => { await load(); await loadMeta() })
                 <td class="px-4 py-2"><RouterLink :to="`/admin/instances/${it.id}`" class="text-primary hover:underline">{{ it.name }}</RouterLink></td>
                 <td class="px-4 py-2"><Badge variant="outline">{{ formatAgent((it as any).agent) }}</Badge></td>
                 <td class="px-4 py-2"><Badge variant="outline">{{ it.driver }}</Badge></td>
-                <td class="px-4 py-2">{{ it.spec.cpu }}C / {{ it.spec.memory_mb }}MB / {{ it.spec.disk_gb }}GB</td>
+                <td class="px-4 py-2">{{ cpuLabel(it.spec.cpu, it.spec.cpu_milli) }} / {{ it.spec.memory_mb }}MB / {{ it.spec.disk_gb }}GB</td>
                 <td class="px-4 py-2">{{ it.image?.name ?? (it.image_id ?? '-') }}</td>
                 <td class="px-4 py-2"><Badge :variant="statusVariant(it.status) as any">{{ it.status }}</Badge></td>
                 <td class="px-4 py-2 text-muted-foreground">{{ formatDateTime(it.created_at) }}</td>
@@ -280,7 +288,7 @@ onMounted(async () => { await load(); await loadMeta() })
             <p v-else-if="!availableDriversForAgent.length" class="text-xs text-muted-foreground">该节点尚未上报可用驱动，无法创建实例。</p>
           </div>
           <div class="grid grid-cols-4 gap-3">
-            <div class="grid gap-2"><Label>CPU</Label><Input :modelValue="String(formCpu)" @update:modelValue="(v:any)=> formCpu=parseInt(v)||1" type="number" /></div>
+            <div class="grid gap-2"><Label>CPU</Label><Input :modelValue="String(formCpu)" @update:modelValue="(v:any)=> parseCpu(v)" type="number" min="0.1" step="0.1" /><p class="text-xs text-muted-foreground">支持小数核数（如 0.5），最低 0.1 核。</p></div>
             <div class="grid gap-2"><Label>内存 MB</Label><Input :modelValue="String(formMem)" @update:modelValue="(v:any)=> formMem=parseInt(v)||128" type="number" /></div>
             <div class="grid gap-2"><Label>磁盘 GB</Label><Input :modelValue="String(formDisk)" @update:modelValue="(v:any)=> formDisk=parseInt(v)||5" type="number" /></div>
             <div class="grid gap-2"><Label>架构</Label><Select v-model="formArch"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="x86_64">x86_64</SelectItem><SelectItem value="arm64">arm64</SelectItem><SelectItem value="aarch64">aarch64</SelectItem></SelectContent></Select></div>

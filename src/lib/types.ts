@@ -85,10 +85,12 @@ export interface InstanceOperationLog {
 }
 
 export interface InstanceSpec {
-  cpu: number
-  memory_mb: number
-  disk_gb: number
-  arch?: string
+   cpu: number
+   /** CPU 毫核配额（500 表示 0.5 核），0/未填表示未设置（整核模式）。 */
+   cpu_milli?: number
+   memory_mb: number
+   disk_gb: number
+   arch?: string
 }
 
 export interface NetworkConfig {

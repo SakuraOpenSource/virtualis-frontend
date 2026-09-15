@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select'
-import { formatBytes, formatDateTime } from '@/lib/utils'
+import { cpuLabel, formatBytes, formatDateTime } from '@/lib/utils'
 
 const route = useRoute()
 const router = useRouter()
@@ -310,7 +310,7 @@ onBeforeUnmount(() => {
           <div><span class="text-muted-foreground">被控：</span>{{ inst.agent?.display_name || inst.agent?.name || '-' }}</div>
           <div><span class="text-muted-foreground">驱动：</span><Badge variant="outline">{{ inst.driver }}</Badge></div>
           <div><span class="text-muted-foreground">状态：</span><Badge>{{ statusLabel(inst.status) }}</Badge></div>
-          <div><span class="text-muted-foreground">规格：</span>{{ inst.spec.cpu }}C / {{ inst.spec.memory_mb }}MB / {{ inst.spec.disk_gb }}GB</div>
+          <div><span class="text-muted-foreground">规格：</span>{{ cpuLabel(inst.spec.cpu, inst.spec.cpu_milli) }} / {{ inst.spec.memory_mb }}MB / {{ inst.spec.disk_gb }}GB</div>
           <div><span class="text-muted-foreground">镜像：</span>{{ inst.image?.name ?? inst.image_id ?? '-' }}</div>
           <div><span class="text-muted-foreground">网络：</span>{{ inst.network?.mode || 'nat' }}{{ inst.network?.bridge ? ` / ${inst.network.bridge}` : '' }}</div>
           <div><span class="text-muted-foreground">配置 IPv4：</span>{{ inst.ip || inst.network?.ipv4 || '-' }}</div>

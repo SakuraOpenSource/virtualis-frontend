@@ -79,7 +79,7 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
     return data
   },
-  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean }) {
+  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; cpu_milli?: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean }) {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
