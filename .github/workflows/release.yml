@@ -1,0 +1,152 @@
+name: Release
+
+# Two ways to trigger:
+#   - Manual: fill in the release tag (and optional name) on the Actions page;
+#     the tag is created on the current commit when it does not exist yet.
+#   - Tag push: `git tag v0.1.0 && git push --tags`; the name defaults to the tag.
+#
+# The normal delivery path is the backend repository embedding this project's
+# build output via go:embed; the archives published here serve deployments
+# that serve the frontend separately (with a reverse proxy for /api).
+#
+# Tag shape decides the release kind:
+#   - v1.2.3            -> stable release
+#   - v1.2.3-rc.1       -> pre-release (GitHub "Pre-release" flag set)
+#
+# Release notes scope:
+#   - pre-release: every commit since the last release of ANY kind
+#   - stable:      every commit since the last STABLE release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.1.0 (created on the current commit if missing)"
+        required: true
+      name:
+        description: "Release name; defaults to the tag"
+        required: false
+      prerelease:
+        description: "Force a pre-release (tags with a suffix are always pre-releases)"
+        required: false
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish frontend artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Trigger sources differ, so normalize first; later steps only read
+      # these outputs. Inputs travel through env instead of being spliced
+      # into the script, so quotes in an input cannot break the command.
+      - name: Resolve release metadata
+        id: meta
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NAME: ${{ inputs.name }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$GITHUB_REF_NAME"
+          fi
+
+          # The tag lands in archive names and the release itself, so guard
+          # against typos early.
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*)
+              prerelease=false ;;
+            v[0-9]*.[0-9]*.[0-9]*-*)
+              prerelease=true ;;
+            *)
+              echo "Tag must look like v1.2.3 (stable) or v1.2.3-rc.1 (pre-release), got: $tag"
+              exit 1 ;;
+          esac
+          # The manual checkbox can force a stable tag out as a pre-release.
+          if [ "$INPUT_PRERELEASE" = "true" ]; then
+            prerelease=true
+          fi
+
+          name="${INPUT_NAME:-$tag}"
+          {
+            echo "tag=$tag"
+            echo "name=$name"
+            echo "prerelease=$prerelease"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $tag (name: $name, prerelease: $prerelease)"
+
+      # Categorize commits by Conventional Commits prefix via the shared
+      # script. Runs before the build: broken history should fail fast.
+      - name: Generate release notes
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
+            bash scripts/release_notes.sh "$TAG" any > release-notes.md
+          else
+            bash scripts/release_notes.sh "$TAG" stable > release-notes.md
+          fi
+          cat release-notes.md
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The build script itself is `vue-tsc -b && vite build`, so type
+      # checking is included: code that fails type checks is never released.
+      - run: pnpm build
+
+      - name: Package artifacts
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          test -f dist/index.html
+          mkdir -p bin/release
+
+          # Keep the dist/ directory inside the archive so unpacking does not
+          # scatter files into the current directory. Both tar.gz and zip are
+          # provided so Windows users do not need extra tools.
+          base="virtualis-frontend-${TAG}"
+          tar -czf "bin/release/${base}.tar.gz" dist
+          zip -qr "bin/release/${base}.zip" dist
+
+          cd bin/release
+          sha256sum virtualis-frontend-* > checksums.txt
+          ls -lh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: virtualis-frontend-dist
+          path: bin/release/*
+
+      # When the tag does not exist yet, this step creates it on
+      # target_commitish, so manual runs do not need a pre-pushed tag.
+      # Notes come from the categorized release-notes.md above.
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          body_path: release-notes.md
+          files: bin/release/*
