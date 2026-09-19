@@ -100,6 +100,8 @@ export interface NetworkConfig {
   gateway?: string
   dns?: string[]
   bandwidth_mbps?: number
+  /** 月流量配额（GB）；0 或缺省表示不限流量。 */
+  traffic_gb?: number
 }
 
 /** NAT 端口转发：被控主机 host_port → 实例 guest_port。 */
@@ -145,6 +147,10 @@ export interface InstanceMetrics {
   network_tx_bytes: number
   bandwidth_rx_bps: number
   bandwidth_tx_bps: number
+  /** 本计费周期累计流量（rx+tx 字节）；被控节点不支持计量时缺省。 */
+  traffic_used_bytes?: number
+  /** 流量配额是否已超限（被控节点侧断网执法状态）。 */
+  traffic_quota_exceeded?: boolean
   collected_at: string
 }
 

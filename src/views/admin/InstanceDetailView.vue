@@ -133,6 +133,17 @@ const memoryPercent = computed(() => {
   return Math.min(100, Math.max(0, metrics.value.memory_used_mb / metrics.value.memory_total_mb * 100))
 })
 
+/** 流量进度：不限流量时 quota 为空；上限 102400GB 与后端 NetworkConfig 校验一致。 */
+const trafficProgress = computed(() => {
+  const quotaGB = inst.value?.network?.traffic_gb ?? 0
+  const used = metrics.value?.traffic_used_bytes
+  if (quotaGB <= 0) return { unlimited: true as const }
+  const quotaBytes = quotaGB * 1024 ** 3
+  const usedBytes = Math.max(0, used ?? 0)
+  const percent = Math.min(100, usedBytes / quotaBytes * 100)
+  return { unlimited: false as const, quotaGB, usedBytes, percent, exceeded: usedBytes >= quotaBytes }
+})
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = { running: '运行中', stopped: '已关机', creating: '创建中', error: '异常', suspended: '已暂停' }
   return labels[status] ?? status
@@ -417,6 +428,18 @@ onBeforeUnmount(() => {
               <div>
                 <div class="mb-1 flex justify-between"><span>RAM</span><span>{{ metrics.memory_used_mb }} / {{ metrics.memory_total_mb || inst.spec.memory_mb }} MB</span></div>
                 <div class="h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full bg-primary transition-all" :style="{ width: `${memoryPercent}%` }" /></div>
+              </div>
+              <div v-if="trafficProgress.unlimited">
+                <div class="mb-1 flex justify-between"><span>流量</span><span class="text-muted-foreground">无限制</span></div>
+                <div v-if="metrics?.traffic_used_bytes != null" class="text-xs text-muted-foreground">已用 {{ formatBytes(metrics.traffic_used_bytes) }}</div>
+              </div>
+              <div v-else>
+                <div class="mb-1 flex justify-between">
+                  <span>流量</span>
+                  <span :class="trafficProgress.exceeded ? 'font-medium text-destructive' : ''">{{ formatBytes(trafficProgress.usedBytes) }} / {{ trafficProgress.quotaGB }} GB</span>
+                </div>
+                <div class="h-2 overflow-hidden rounded-full bg-muted"><div class="h-full rounded-full transition-all" :class="trafficProgress.exceeded ? 'bg-destructive' : 'bg-primary'" :style="{ width: `${trafficProgress.percent}%` }" /></div>
+                <div v-if="trafficProgress.exceeded || metrics?.traffic_quota_exceeded" class="mt-1 text-xs text-destructive">流量配额已超限，实例网络已被节点暂停</div>
               </div>
               <div class="grid grid-cols-2 gap-3 rounded-md border p-3">
                 <div><div class="text-muted-foreground">下载带宽</div><div class="font-medium">{{ formatRate(metrics.bandwidth_rx_bps) }}</div><div class="text-xs text-muted-foreground">总计 {{ formatBytes(metrics.network_rx_bytes) }}</div></div>

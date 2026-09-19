@@ -105,3 +105,55 @@
   }
   body { @apply bg-background text-foreground antialiased; }
 }
+
+/* ---------- 全局微动效（150–250ms ease-out，尊重系统减动效） ---------- */
+
+@keyframes route-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 路由页进入淡入：作用于主内容区的直接子容器。 */
+main > * {
+  animation: route-fade-in 200ms ease-out both;
+}
+
+/* 列表行 hover 反馈。 */
+table tbody tr {
+  transition: background-color 150ms ease-out;
+}
+table tbody tr:hover {
+  background-color: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+
+/* 按钮按下反馈。 */
+button:not(:disabled):active,
+[class*='btn']:not(:disabled):active {
+  transition: transform 120ms ease-out;
+  transform: scale(0.97);
+}
+
+/* 骨架屏淡入。 */
+@keyframes soft-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+[class*='animate-pulse'],
+[class*='Skeleton'] {
+  animation: soft-fade-in 200ms ease-out both;
+}
+
+/* 系统开启“减弱动态效果”时全部关闭。 */
+@media (prefers-reduced-motion: reduce) {
+  main > *,
+  [class*='animate-pulse'],
+  [class*='Skeleton'] {
+    animation: none;
+  }
+  table tbody tr,
+  button:not(:disabled):active,
+  [class*='btn']:not(:disabled):active {
+    transition: none;
+    transform: none;
+  }
+}
