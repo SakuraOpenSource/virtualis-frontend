@@ -104,13 +104,29 @@ async function doRotateToken() {
 }
 
 async function copyText(value: string) {
+  // 非 HTTPS 环境（如 http://MASTER:8080 直连）下 navigator.clipboard 为
+  // undefined，剪贴板 API 直接抛错导致“无法复制”。降级为 textarea +
+  // document.execCommand('copy')，两种环境都能工作。
   try {
-    await navigator.clipboard.writeText(value)
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = value
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.focus()
+      ta.select()
+      const ok = document.execCommand('copy')
+      document.body.removeChild(ta)
+      if (!ok) throw new Error('execCommand copy failed')
+    }
     copied.value = true
     toast.success('已复制')
     setTimeout(() => copied.value = false, 1500)
   } catch {
-    toast.error('复制失败，请手动复制')
+    toast.error('复制失败，请手动选择文本复制')
   }
 }
 
@@ -182,9 +198,9 @@ onMounted(load)
               <div class="flex gap-2"><Input :modelValue="joinCmd" readonly class="font-mono text-xs" /><Button variant="outline" size="sm" @click="copyText(joinCmd)"><Copy v-if="!copied" /><Check v-else />复制</Button></div>
             </div>
             <div class="space-y-2">
-              <Label>Linux/macOS 一键下载并接入</Label>
+              <Label>Linux/macOS 一键安装并接入（推荐）</Label>
               <div class="flex gap-2"><Input :modelValue="curlCmd" readonly class="font-mono text-xs" /><Button variant="outline" size="sm" @click="copyText(curlCmd)"><Copy />复制</Button></div>
-              <p class="text-xs text-muted-foreground">脚本会从当前主控下载匹配的 Linux/macOS 被控包；如果被控在 NAT 后，请在命令中补充 --advertise http://被控地址:8081。</p>
+              <p class="text-xs text-muted-foreground">脚本从 GitHub virtualis-agent release 拉取最新被控（失败时回退主控内置包），安装到 /opt/virtualis/agent 并注册 systemd 服务；被控在 NAT 后时请补充 --advertise http://被控地址:8081。</p>
             </div>
           </div>
         </div>
