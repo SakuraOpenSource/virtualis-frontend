@@ -22,7 +22,7 @@ export interface Bootstrap {
   installed: boolean
   site_name: string
   site_description: string
-  captcha?: { login: boolean; register: boolean; charset: string }
+  captcha?: { login: boolean }
 }
 
 export interface CaptchaChallenge {
@@ -52,7 +52,6 @@ export interface InstallRequest {
 
 export interface CaptchaSettings {
   login_enabled: boolean
-  register_enabled: boolean
 }
 
 export interface SiteSettings {

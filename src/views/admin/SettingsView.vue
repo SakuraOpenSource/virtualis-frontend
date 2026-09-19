@@ -53,7 +53,6 @@ function driverLabel(name: string) {
 
 // captcha
 const capLogin = ref(false)
-const capRegister = ref(false)
 
 async function loadAgentNetwork() {
   hostIfaces.value = []
@@ -89,7 +88,6 @@ async function loadAll() {
     selectedAgent.value = agentList[0] ? String(agentList[0].id) : ''
     await loadAgentNetwork()
     capLogin.value = cap.login_enabled
-    capRegister.value = cap.register_enabled
   } catch (e) { error.value = errorMessage(e) } finally { loading.value=false }
 }
 
@@ -106,7 +104,7 @@ async function saveVirt() {
 }
 async function saveCaptcha() {
   saving.value='captcha'
-  try { await adminApi.updateCaptcha({ login_enabled: capLogin.value, register_enabled: capRegister.value }); toast.success('验证码设置已保存') } catch (e) { toast.error(errorMessage(e)) } finally { saving.value='' }
+  try { await adminApi.updateCaptcha({ login_enabled: capLogin.value }); toast.success('验证码设置已保存') } catch (e) { toast.error(errorMessage(e)) } finally { saving.value='' }
 }
 
 onMounted(loadAll)
@@ -178,11 +176,11 @@ onMounted(loadAll)
           </div>
           <div class="flex items-center justify-between rounded-md border p-3">
             <div><div class="text-sm font-medium">允许重装</div><div class="text-xs text-muted-foreground">关闭后重装接口将返回禁用</div></div>
-            <Switch :checked="vAllowReinstall" @update:checked="(v:boolean)=> vAllowReinstall=v" />
+            <Switch v-model="vAllowReinstall" />
           </div>
           <div class="flex items-center justify-between rounded-md border p-3">
             <div><div class="text-sm font-medium">自动刷新状态</div><div class="text-xs text-muted-foreground">列表页是否定期同步驱动状态</div></div>
-            <Switch :checked="vAutoRefresh" @update:checked="(v:boolean)=> vAutoRefresh=v" />
+            <Switch v-model="vAutoRefresh" />
           </div>
           <Button size="sm" :disabled="saving==='virt'" @click="saveVirt">{{ saving==='virt' ? '保存中...' : '保存虚拟化设置' }}</Button>
         </CardContent>
@@ -191,16 +189,12 @@ onMounted(loadAll)
       <Card>
         <CardHeader>
           <CardTitle>验证码</CardTitle>
-          <CardDescription>登录时是否需要图形验证码</CardDescription>
+          <CardDescription>登录时是否需要图形验证码（本系统为单管理员，无注册入口）</CardDescription>
         </CardHeader>
         <CardContent class="space-y-4">
           <div class="flex items-center justify-between rounded-md border p-3">
             <div class="text-sm font-medium">登录验证码</div>
-            <Switch :checked="capLogin" @update:checked="(v:boolean)=> capLogin=v" />
-          </div>
-          <div class="flex items-center justify-between rounded-md border p-3">
-            <div class="text-sm font-medium">注册验证码（保留）</div>
-            <Switch :checked="capRegister" @update:checked="(v:boolean)=> capRegister=v" />
+            <Switch v-model="capLogin" />
           </div>
           <Button size="sm" :disabled="saving==='captcha'" @click="saveCaptcha">{{ saving==='captcha' ? '保存中...' : '保存验证码设置' }}</Button>
         </CardContent>

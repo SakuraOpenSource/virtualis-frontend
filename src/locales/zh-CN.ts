@@ -95,7 +95,6 @@ export default {
     autoRefresh: '自动刷新状态',
     captcha: '验证码设置',
     loginCaptcha: '登录验证码',
-    registerCaptcha: '注册验证码',
   },
   apiKey: {
     title: 'API 密钥',
