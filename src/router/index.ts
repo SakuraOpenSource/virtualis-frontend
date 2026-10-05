@@ -29,6 +29,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'instances/:id', name: 'instance-detail', component: () => import('@/views/admin/InstanceDetailView.vue'), props: true },
       { path: 'images', name: 'images', component: () => import('@/views/admin/ImagesView.vue') },
       { path: 'agents', name: 'agents', component: () => import('@/views/admin/AgentsView.vue') },
+      { path: 'networks', name: 'networks', component: () => import('@/views/admin/NetworksView.vue') },
       { path: 'settings', name: 'settings', component: () => import('@/views/admin/SettingsView.vue') },
       { path: 'api-keys', name: 'api-keys', component: () => import('@/views/admin/ApiKeysView.vue') },
       { path: 'account', name: 'account', component: () => import('@/views/admin/AccountView.vue') },

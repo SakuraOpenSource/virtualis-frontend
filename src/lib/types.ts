@@ -130,6 +130,9 @@ export interface VirtualisInstance {
   agent?: VirtualisAgent | null
   max_nat_mappings?: number
   nat_mappings?: NATMapping[]
+	 vpc_id?: number | null
+	 vpc?: VPC | null
+	 firewall_rules?: FirewallRule[]
   ssh_password?: string
   ip?: string
   observed_ip?: string
@@ -207,6 +210,24 @@ export interface VirtualisDriver {
   available: boolean
   error?: string
 }
+
+export interface VPC {
+  id: number; agent_id: number; name: string; driver: string; subnet: string; gateway: string
+  dhcp_start: string; dhcp_end: string; nat: boolean; dns: string[]; note: string; instance_count?: number
+}
+export interface VPCInput {
+  agent_id: number; name: string; driver: string; subnet: string; gateway: string
+  dhcp_start?: string; dhcp_end?: string; nat: boolean; dns?: string[]; note?: string
+}
+export interface FirewallInput {
+  direction: string; action: string; protocol: string; port_start: number; port_end: number
+  cidr: string; priority: number; enabled: boolean; remark: string
+}
+export interface FirewallRule extends FirewallInput { id: number; instance_id: number; agent_id: number }
+export interface FreeIPEntry { id: number; ip: string; cidr: string; gateway: string; dns: string[]; interface: string; note: string }
+export interface IPPoolEntry { id: number; ip: string; gateway: string; prefix: number; status: string; note: string; instance_id?: number | null; instance_name?: string }
+export interface IPPoolInput { gateway: string; prefix: number; dns: string[]; interface: string; note: string }
+export interface IPPoolOverview extends IPPoolInput { agent_id: number; agent_name: string; total: number; free: number; assigned: number; disabled: number; entries: IPPoolEntry[] }
 
 /** 被控主机网卡，供独立 IP 模式选择挂载目标。 */
 export interface HostInterface {

@@ -6,6 +6,7 @@ import type {
   HostNetworkSummary,
   NATMapping,
   InstanceOperationLog
+  , VPC, VPCInput, FirewallRule, FirewallInput, FreeIPEntry, IPPoolOverview, IPPoolInput, IPPoolEntry
 } from './types'
 
 interface PageQuery { page?: number; page_size?: number }
@@ -79,7 +80,7 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
     return data
   },
-  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; cpu_milli?: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean }) {
+  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; cpu_milli?: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean; ip_pool_entry_id?: number; vpc_id?: number }) {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
@@ -152,6 +153,22 @@ export const virtualisApi = {
     return data
   },
   async deleteImage(id: number) { await http.delete(`/images/${id}`) },
+}
+
+export const networkApi = {
+  async vpcs(agent_id?: number) { return (await http.get<{items: VPC[]}>('/vpcs', {params: {agent_id}})).data.items ?? [] },
+  async createVPC(payload: VPCInput) { return (await http.post<VPC>('/vpcs', payload)).data },
+  async deleteVPC(id: number) { await http.delete(`/vpcs/${id}`) },
+  async pool(agentID: number) { return (await http.get<IPPoolOverview>(`/admin/ip-pools/${agentID}`)).data },
+  async savePool(agentID: number, payload: IPPoolInput) { return (await http.put<IPPoolOverview>(`/admin/ip-pools/${agentID}`, payload)).data },
+  async addIPs(agentID: number, ips: string[]) { return (await http.post<{created: number; skipped: {ip: string; reason: string}[]}>(`/admin/ip-pools/${agentID}/entries`, {ips})).data },
+  async updateIP(id: number, payload: Partial<Pick<IPPoolEntry, 'gateway'|'prefix'|'note'|'status'>>) { return (await http.patch<IPPoolEntry>(`/admin/ip-pool-entries/${id}`, payload)).data },
+  async deleteIP(id: number) { await http.delete(`/admin/ip-pool-entries/${id}`) },
+  async freeIPs(agentID: number) { return (await http.get<{items: FreeIPEntry[]}>(`/ip-pools/${agentID}/free`)).data.items ?? [] },
+  async firewall(instanceID: number) { return (await http.get<{items: FirewallRule[]}>(`/instances/${instanceID}/firewall`)).data.items ?? [] },
+  async createFirewall(instanceID: number, payload: FirewallInput) { return (await http.post<FirewallRule>(`/instances/${instanceID}/firewall`, payload)).data },
+  async updateFirewall(id: number, payload: FirewallInput) { return (await http.patch<FirewallRule>(`/firewall/${id}`, payload)).data },
+  async deleteFirewall(id: number) { await http.delete(`/firewall/${id}`) },
 }
 
 export const agentApi = {

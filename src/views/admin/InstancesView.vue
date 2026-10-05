@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { agentApi, virtualisApi } from '@/lib/endpoints'
+import { agentApi, virtualisApi, networkApi } from '@/lib/endpoints'
+import type { FreeIPEntry, VPC } from '@/lib/types'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import type {
@@ -41,7 +42,31 @@ const formMem = ref(1024)
 const formDisk = ref(20)
 const formArch = ref('x86_64')
 const formImageId = ref<string>('none')
-const formNetworkMode = ref<'nat' | 'dedicated' | 'none'>('nat')
+const formNetworkMode = ref<'nat' | 'dedicated' | 'vpc' | 'none'>('nat')
+const freeIPs = ref<FreeIPEntry[]>([])
+const vpcs = ref<VPC[]>([])
+const formIPEntry = ref('manual')
+const formVPC = ref('')
+let networkRequest = 0
+watch([formAgentId, formNetworkMode], async () => {
+  const request = ++networkRequest
+  formIPEntry.value = 'manual'; formVPC.value = ''; freeIPs.value = []; vpcs.value = []
+  formIPv4.value = ''; formGateway.value = ''; formDNS.value = ''; formBridge.value = ''
+  if (!formAgentId.value) return
+  try {
+    const agentID = Number(formAgentId.value)
+    if (formNetworkMode.value === 'dedicated') { const items = await networkApi.freeIPs(agentID); if (request === networkRequest) freeIPs.value = items }
+    if (formNetworkMode.value === 'vpc') { const items = await networkApi.vpcs(agentID); if (request === networkRequest) vpcs.value = items }
+  } catch (e) { if (request === networkRequest) toast.error(errorMessage(e)) }
+})
+watch(formIPEntry, value => {
+  const entry = freeIPs.value.find(i => String(i.id) === value)
+  if (entry) { formIPv4.value = entry.cidr; formGateway.value = entry.gateway; formDNS.value = entry.dns.join(','); formBridge.value = entry.interface }
+})
+watch(formVPC, value => {
+  const vpc = vpcs.value.find(i => String(i.id) === value)
+  if (vpc) { formDriver.value = vpc.driver; formBridge.value = vpc.name; formGateway.value = vpc.gateway; formDNS.value = (vpc.dns ?? []).join(',') }
+})
 const formBridge = ref('')
 const hostIfaces = ref<HostInterface[]>([])
 const hostIPv4Count = ref(0)
@@ -138,6 +163,7 @@ function parseCpu(value: string) {
 async function create() {
   if (!formName.value.trim()) { toast.error('请输入名称'); return }
   if (!formAgentId.value) { toast.error('请选择被控节点（主控不负责创建实例）'); return }
+  if (formNetworkMode.value === 'vpc' && !formVPC.value) { toast.error('请选择 VPC 网络'); return }
   // CPU 支持小数：整数核只发 cpu；小数核换算为毫核，cpu 存向上取整的核数。
   const cpuMilli = Number.isInteger(formCpu.value) ? undefined : Math.round(formCpu.value * 1000)
   creating.value = true
@@ -160,6 +186,8 @@ async function create() {
       image_id: formImageId.value !== 'none' ? parseInt(formImageId.value) : null,
       max_nat_mappings: formMaxNATMappings.value || 0,
       auto_password: formAutoPassword.value,
+      ip_pool_entry_id: formNetworkMode.value === 'dedicated' && formIPEntry.value !== 'manual' ? Number(formIPEntry.value) : undefined,
+      vpc_id: formNetworkMode.value === 'vpc' ? Number(formVPC.value) : undefined,
     })
     toast.success('实例已在被控节点上创建')
     showCreate.value = false
@@ -323,7 +351,7 @@ onMounted(async () => { await load(); await loadMeta() })
               <p v-if="formAgentId && !dedicatedAvailable" class="text-xs text-amber-600">该节点当前 {{ hostIPv4Count }} 个 IPv4 地址，独立 IP 模式不可用。</p>
             </div>
             <div class="grid gap-3 sm:grid-cols-2">
-              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（共享主机 IP）</SelectItem><SelectItem value="dedicated" :disabled="!dedicatedAvailable">独立 IP（直连主机网段）</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
+              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（共享主机 IP）</SelectItem><SelectItem value="dedicated" :disabled="!dedicatedAvailable">独立 IP（直连主机网段）</SelectItem><SelectItem value="vpc">VPC 私有网络</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
               <div v-if="formNetworkMode === 'dedicated'" class="grid gap-2">
                 <Label>挂载接口</Label>
                 <Select v-model="formBridge">
@@ -335,6 +363,14 @@ onMounted(async () => { await load(); await loadMeta() })
                 </Select>
                 <p class="text-xs text-muted-foreground">选择已存在的网桥或物理网卡；网桥直接挂载，物理网卡以 macvtap 直连。</p>
               </div>
+            </div>
+            <div v-if="formNetworkMode === 'dedicated'" class="grid gap-2">
+              <Label>从独立 IP 池选择</Label><Select v-model="formIPEntry"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="manual">手动填写网络参数</SelectItem><SelectItem v-for="entry in freeIPs" :key="entry.id" :value="String(entry.id)">{{ entry.cidr }} {{ entry.note }}</SelectItem></SelectContent></Select>
+              <p class="text-xs text-muted-foreground">选择地址后自动填写网关、DNS 和接口。提交时会检查地址是否仍可分配。</p>
+            </div>
+            <div v-if="formNetworkMode === 'vpc'" class="grid gap-2">
+              <Label>VPC 网络</Label><Select v-model="formVPC"><SelectTrigger><SelectValue placeholder="选择该节点的 VPC" /></SelectTrigger><SelectContent><SelectItem v-for="vpc in vpcs" :key="vpc.id" :value="String(vpc.id)">{{ vpc.name }} · {{ vpc.subnet }} · {{ vpc.driver }}</SelectItem></SelectContent></Select>
+              <p class="text-xs text-muted-foreground">默认由 DHCP 分配地址。可在“VPC 与 IP 池”页面创建网络。</p>
             </div>
             <div class="grid gap-3 sm:grid-cols-3">
               <div class="grid gap-2"><Label>MAC 地址</Label><Input v-model="formMAC" placeholder="52:54:00:xx:xx:xx" /></div>

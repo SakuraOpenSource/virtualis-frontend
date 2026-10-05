@@ -16,6 +16,7 @@ const nav = [
   { to: '/admin/instances', label: '实例', icon: Server, name: 'instances' },
   { to: '/admin/images', label: '镜像', icon: HardDrive, name: 'images' },
   { to: '/admin/agents', label: '被控节点', icon: Network, name: 'agents' },
+  { to: '/admin/networks', label: 'VPC 与 IP 池', icon: Network, name: 'networks' },
   { to: '/admin/settings', label: '设置', icon: Settings, name: 'settings' },
   { to: '/admin/api-keys', label: 'API 密钥', icon: KeyRound, name: 'api-keys' },
   { to: '/admin/account', label: '账号', icon: User, name: 'account' },

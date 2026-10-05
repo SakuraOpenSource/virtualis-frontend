@@ -7,6 +7,7 @@ import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance, InstanceOperationLog, NetworkConfig } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
+import FirewallPanel from '@/components/app/FirewallPanel.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
 import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
@@ -503,4 +504,5 @@ onBeforeUnmount(() => {
     <ConfirmDialog :open="confirmNetworkOpen" @update:open="(v:boolean)=> confirmNetworkOpen=v" :title="$t('confirm.configureNetworkTitle')" :description="$t('confirm.configureNetworkDesc')" danger @confirm="doConfigureNetwork" />
     <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doDelete" />
   </div>
+    <FirewallPanel v-if="inst" :instance-id="id" class="mt-5" />
 </template>
