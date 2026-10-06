@@ -70,6 +70,27 @@ export interface VirtualisSettings {
   default_network_interface: string
 }
 
+export type BatchAction = 'start' | 'stop' | 'restart' | 'delete'
+export interface BatchResult { ok: number[]; failed: { id: number; reason: string }[] }
+
+export interface Snapshot {
+  id: number
+  instance_id: number
+  agent_id: number
+  name: string
+  remark: string
+  size_bytes: number
+  status: string
+  error?: string
+  created_at: string
+}
+
+export interface Backup extends Snapshot {
+  driver: string
+  checksum: string
+  format?: string
+}
+
 export interface InstanceOperationLog {
   id: number
   instance_id: number
@@ -124,6 +145,11 @@ export interface VirtualisInstance {
   spec: InstanceSpec
   network?: NetworkConfig
   status: string
+  busy_operation?: string
+  busy_action?: string
+  busy_since?: string | null
+  trashed_at?: string | null
+  purge_after?: string | null
   image_id?: number | null
   image?: VirtualisImage | null
   agent_id?: number | null

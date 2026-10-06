@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { TabsRoot, TabsList, TabsTrigger, TabsContent } from 'reka-ui'
 import { useRoute, useRouter } from 'vue-router'
 import RFB from '@novnc/novnc'
 import { virtualisApi } from '@/lib/endpoints'
@@ -8,6 +9,9 @@ import { useToast } from '@/composables/useToast'
 import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance, InstanceOperationLog, NetworkConfig } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import FirewallPanel from '@/components/app/FirewallPanel.vue'
+import RecoveryPanel from '@/components/app/RecoveryPanel.vue'
+import MigrationDialog from '@/components/app/MigrationDialog.vue'
+import ResizeDialog from '@/components/app/ResizeDialog.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
 import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
@@ -23,10 +27,17 @@ const route = useRoute()
 const router = useRouter()
 const toast = useToast()
 const id = Number(route.params.id)
+const activeTab = ref('overview')
 const inst = ref<VirtualisInstance | null>(null)
 const loading = ref(false)
 const error = ref('')
 const actionLoading = ref('')
+const recoveryBusy = ref('')
+const taskBusy = ref('')
+const migrationOpen = ref(false)
+const resizeOpen = ref(false)
+const busyLabel = computed(() => recoveryBusy.value || taskBusy.value || actionLoading.value || (configureBusy.value ? '配置网络' : passwordBusy.value ? '重置密码' : natBusy.value ? 'NAT 操作' : '') || (inst.value?.busy_operation ? `服务端 ${inst.value.busy_action || '操作'}（${inst.value.busy_operation}）` : ''))
+const busy = computed(() => !!busyLabel.value)
 const images = ref<VirtualisImage[]>([])
 const reinstallImage = ref<string>('')
 const metrics = ref<InstanceMetrics | null>(null)
@@ -40,6 +51,7 @@ const vncTarget = ref<HTMLElement | null>(null)
 const vncConnected = ref(false)
 let rfb: RFB | null = null
 let telemetryTimer: ReturnType<typeof setInterval> | undefined
+let logsTimer: ReturnType<typeof setInterval> | undefined
 
 // NAT 映射与 SSH 密码管理。
 const natMappings = ref<NATMapping[]>([])
@@ -57,20 +69,26 @@ const pendingNatId = ref<number | null>(null)
 const confirmPasswordOpen = ref(false)
 const confirmNetworkOpen = ref(false)
 const confirmDeleteOpen = ref(false)
+let generation = 0, logsRequest = 0, disposed = false
+watch(busy, () => { generation++ }, { flush: 'sync' })
+watch(() => inst.value?.agent_id, () => { generation++; network.value = null; metrics.value = null }, { flush: 'sync' })
 
 const sshMapping = computed(() => natMappings.value.find(m => m.guest_port === 22 && m.protocol === 'tcp') ?? null)
 const sshHost = computed(() => inst.value?.agent?.ip || inst.value?.agent?.endpoint?.replace(/^https?:\/\//, '').replace(/:\d+$/, '') || '')
 const sshCommand = computed(() => sshMapping.value && sshHost.value ? `ssh root@${sshHost.value} -p ${sshMapping.value.host_port}` : '')
 
 async function loadNAT() {
+  const current = generation
   try {
     const fresh = await virtualisApi.instance(id)
+    if (current !== generation || disposed) return
     inst.value = fresh
     natMappings.value = fresh.nat_mappings ?? []
   } catch { /* 详情加载失败时主流程已有错误提示 */ }
 }
 
 async function addNAT() {
+  if (busy.value) return
   const guestPort = parseInt(natForm.value.guest_port)
   if (!guestPort || guestPort < 1 || guestPort > 65535) { toast.error('请填写实例端口（1-65535）'); return }
   natBusy.value = true
@@ -94,6 +112,7 @@ async function removeNAT(mappingId?: number) {
 }
 
 async function doRemoveNAT() {
+  if (busy.value) return
   if (!pendingNatId.value) return
   confirmNatOpen.value = false
   natBusy.value = true
@@ -109,6 +128,7 @@ function rotatePassword() {
 }
 
 async function doRotatePassword() {
+  if (busy.value) return
   confirmPasswordOpen.value = false
   const password = generatePassword()
   passwordBusy.value = true
@@ -165,9 +185,12 @@ async function loadImages() {
 }
 
 async function refreshTelemetry(showToast = false) {
-  if (!inst.value) return
+  if (!inst.value || busy.value || telemetryLoading.value) return
+  const current = generation
   telemetryLoading.value = true
   const results = await Promise.allSettled([virtualisApi.metrics(id), virtualisApi.network(id)])
+  telemetryLoading.value = false
+  if (current !== generation || disposed) return
   if (results[0].status === 'fulfilled') metrics.value = results[0].value
   if (results[1].status === 'fulfilled') network.value = results[1].value
   telemetryLoading.value = false
@@ -175,24 +198,41 @@ async function refreshTelemetry(showToast = false) {
 }
 
 async function checkNetwork() {
+  if (busy.value || networkLoading.value) return
+  const current = generation
   networkLoading.value = true
   try {
-    network.value = await virtualisApi.network(id)
+    const result = await virtualisApi.network(id)
+    if (current !== generation || disposed) return
+    network.value = result
     const observed = network.value.interfaces?.flatMap((item) => item.ipv4 ?? []).find((item) => item && item !== '127.0.0.1')
     if (inst.value && observed) {
       inst.value.observed_ip = observed.split('/')[0]
       inst.value.ip = inst.value.observed_ip
     }
     toast.success(network.value.reachable ? '网络检测通过' : '网络检测未通过')
-  } catch (e) { toast.error(errorMessage(e)) } finally { networkLoading.value = false }
+  } catch (e) { if (current === generation && !disposed) toast.error(errorMessage(e)) } finally { networkLoading.value = false }
 }
 
 async function loadLogs() {
+  const current = ++logsRequest
   logsLoading.value = true
   try {
     const page = await virtualisApi.operationLogs(id, { page: 1, page_size: 50 })
+    if (current !== logsRequest || disposed) return
     operationLogs.value = page.items ?? []
-  } catch (e) { toast.error(errorMessage(e)) } finally { logsLoading.value = false }
+  } catch (e) { if (current === logsRequest && !disposed) toast.error(errorMessage(e)) } finally { if (current === logsRequest) logsLoading.value = false }
+}
+async function refreshAfterTask() {
+  generation++
+  try {
+    const updated = await virtualisApi.instance(id)
+    if (disposed) return
+    inst.value = updated
+    natMappings.value = updated.nat_mappings ?? []
+    networkForm.value = { ...updated.network, mode: updated.network?.mode || 'nat' }
+  } catch (e) { if (!disposed) error.value = errorMessage(e) }
+  await loadLogs()
 }
 
 function configureNetwork() {
@@ -200,6 +240,7 @@ function configureNetwork() {
 }
 
 async function doConfigureNetwork() {
+  if (busy.value) return
   confirmNetworkOpen.value = false
   configureBusy.value = true
   try {
@@ -262,6 +303,7 @@ async function copy(value: string) {
 }
 
 async function power(action: string) {
+  if (busy.value) return
   actionLoading.value=action
   try {
     const imgId = action==='reinstall' && reinstallImage.value ? parseInt(reinstallImage.value) : undefined
@@ -273,6 +315,7 @@ async function power(action: string) {
 }
 
 async function refreshStatus() {
+  if (busy.value) return
   actionLoading.value='status'
   try {
     inst.value = await virtualisApi.status(id)
@@ -286,6 +329,7 @@ function del() {
 }
 
 async function doDelete() {
+  if (busy.value) return
   confirmDeleteOpen.value = false
   try { await virtualisApi.deleteInstance(id); toast.success('已删除'); router.push({ name: 'instances' }) } catch (e) { toast.error(errorMessage(e)) }
 }
@@ -294,11 +338,14 @@ onMounted(async () => {
   await load()
   await Promise.all([loadImages(), refreshTelemetry(), loadLogs()])
   telemetryTimer = setInterval(() => refreshTelemetry(), 10000)
+  logsTimer = setInterval(() => { if (busy.value || activeTab.value === 'logs') void loadLogs() }, 3000)
   await loadNAT()
 })
 
 onBeforeUnmount(() => {
+  disposed = true; generation++; logsRequest++
   if (telemetryTimer) clearInterval(telemetryTimer)
+  if (logsTimer) clearInterval(logsTimer)
   disconnectVNC()
 })
 </script>
@@ -307,12 +354,23 @@ onBeforeUnmount(() => {
   <div>
     <PageHeader :title="inst ? `实例 #${inst.id} - ${inst.name}` : '实例详情'" description="被控资源、网络检测、VNC 与电源操作">
       <template #actions>
+        <Button data-testid="open-resize" variant="outline" :disabled="busy || !inst || inst.status !== 'stopped'" @click="resizeOpen = true">调整规格</Button>
+        <Button data-testid="open-migration" variant="outline" :disabled="busy || !inst || inst.status !== 'stopped'" @click="migrationOpen = true">跨节点迁移</Button>
         <Button variant="outline" @click="router.push({ name: 'instances' })">返回列表</Button>
       </template>
     </PageHeader>
     <ErrorAlert :message="error" />
+    <div v-if="busy" data-testid="operation-busy" role="status" class="mb-5 rounded-lg border bg-muted/40 p-4 text-sm">{{ busyLabel }}执行中。请勿重复提交或关闭页面。<Button size="sm" variant="link" @click="activeTab = 'logs'">查看操作日志</Button></div>
     <LoadingBlock v-if="loading" />
     <div v-else-if="inst" class="space-y-6">
+      <TabsRoot v-model="activeTab" class="space-y-5">
+        <TabsList class="detail-tabs" aria-label="实例详情">
+          <TabsTrigger value="overview">概览</TabsTrigger>
+          <TabsTrigger value="network">网络与防火墙</TabsTrigger>
+          <TabsTrigger value="recovery">快照与备份</TabsTrigger>
+          <TabsTrigger value="logs">操作日志</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" class="space-y-6 tab-panel">
       <Card>
         <CardHeader><CardTitle>基本信息</CardTitle></CardHeader>
         <CardContent class="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
@@ -334,88 +392,6 @@ onBeforeUnmount(() => {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>SSH 访问</CardTitle>
-          <CardDescription>NAT 模式下创建实例时自动生成密码并映射 22 端口</CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <template v-if="sshCommand">
-            <div class="grid gap-2">
-              <Label class="text-muted-foreground text-xs">连接命令</Label>
-              <code class="bg-muted/40 block overflow-x-auto rounded-md border p-3 text-sm">{{ sshCommand }}</code>
-            </div>
-            <div class="grid gap-2">
-              <Label class="text-muted-foreground text-xs">root 密码</Label>
-              <div class="flex flex-wrap items-center gap-2">
-                <code class="bg-muted/40 rounded-md border px-3 py-2 text-sm tabular">
-                  {{ inst.ssh_password ? (showPassword ? inst.ssh_password : '••••••••••••••••') : '未生成' }}
-                </code>
-                <Button variant="outline" size="sm" @click="showPassword = !showPassword">{{ showPassword ? '隐藏' : '显示' }}</Button>
-                <Button variant="outline" size="sm" :disabled="passwordBusy" @click="rotatePassword">重置密码</Button>
-              </div>
-              <p class="text-muted-foreground text-xs">QEMU 虚拟机需客户机安装并运行 qemu-guest-agent，密码注入才会生效。</p>
-            </div>
-          </template>
-          <p v-else class="text-muted-foreground text-sm">
-            {{ inst.network?.mode === 'nat' ? '尚未生成 SSH 映射（实例可能创建于该功能上线前，可手动添加 22 端口映射）。' : '非 NAT 模式请直接使用独立 IP 连接。' }}
-          </p>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>NAT 端口映射</CardTitle>
-          <CardDescription>
-            把宿主机端口转发到实例端口；上限 {{ inst.max_nat_mappings ? `${inst.max_nat_mappings} 条` : '不限' }}，当前 {{ natMappings.length }} 条
-          </CardDescription>
-        </CardHeader>
-        <CardContent class="space-y-4">
-          <div v-if="natMappings.length" class="divide-y rounded-md border">
-            <div v-for="m in natMappings" :key="m.id" class="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
-              <div class="flex items-center gap-3">
-                <Badge variant="outline">{{ m.protocol.toUpperCase() }}</Badge>
-                <span class="font-medium tabular">{{ m.host_port }}</span>
-                <span class="text-muted-foreground">→</span>
-                <span class="tabular">实例 {{ m.guest_port }}</span>
-                <span v-if="m.remark" class="text-muted-foreground">{{ m.remark }}</span>
-              </div>
-              <Button variant="ghost" size="sm" class="text-destructive" :disabled="natBusy" @click="removeNAT(m.id)">删除</Button>
-            </div>
-          </div>
-          <p v-else class="text-muted-foreground text-sm">暂无映射。</p>
-
-          <form class="grid gap-3 sm:grid-cols-5" @submit.prevent="addNAT">
-            <div class="grid gap-1">
-              <Label class="text-muted-foreground text-xs">协议</Label>
-              <Select v-model="natForm.protocol">
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tcp">TCP</SelectItem>
-                  <SelectItem value="udp">UDP</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div class="grid gap-1">
-              <Label class="text-muted-foreground text-xs">实例端口 *</Label>
-              <Input :modelValue="natForm.guest_port" @update:modelValue="(v:any)=> natForm.guest_port=v" placeholder="80" inputmode="numeric" />
-            </div>
-            <div class="grid gap-1">
-              <Label class="text-muted-foreground text-xs">宿主端口（留空自动）</Label>
-              <Input :modelValue="natForm.host_port" @update:modelValue="(v:any)=> natForm.host_port=v" placeholder="自动分配" inputmode="numeric" />
-            </div>
-            <div class="grid gap-1">
-              <Label class="text-muted-foreground text-xs">备注</Label>
-              <Input :modelValue="natForm.remark" @update:modelValue="(v:any)=> natForm.remark=v" placeholder="网站" />
-            </div>
-            <div class="flex items-end">
-              <Button type="submit" class="w-full" :disabled="natBusy">添加映射</Button>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-
-      <div class="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <div class="flex items-center justify-between gap-3"><div><CardTitle>实例状态</CardTitle><CardDescription>数据由被控节点实时采集，每 10 秒刷新</CardDescription></div><Button variant="outline" size="sm" :disabled="telemetryLoading" @click="refreshTelemetry(true)">{{ telemetryLoading ? '刷新中...' : '刷新' }}</Button></div>
@@ -452,9 +428,109 @@ onBeforeUnmount(() => {
           </CardContent>
         </Card>
 
+      <Card>
+        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>VNC 连接</CardTitle><CardDescription>通过主控内置 WebSocket 代理使用 noVNC，浏览器无需安装 VNC 客户端</CardDescription></div><div class="flex gap-2"><Button :disabled="vncLoading" @click="loadVNC">{{ vncLoading ? '连接中...' : consoleOpen ? '重连 VNC' : '连接 VNC' }}</Button><Button variant="outline" @click="openConsoleWindow">新窗口打开</Button><Button v-if="consoleOpen" variant="outline" @click="disconnectVNC">断开</Button><Badge v-if="vncConnected" variant="outline">已连接</Badge><Badge v-else-if="consoleOpen" variant="outline">未连接</Badge></div></div></CardHeader>
+        <CardContent>
+          <div v-if="consoleOpen" ref="vncTarget" class="h-[420px] w-full overflow-hidden rounded-md bg-black" />
+          <div v-else-if="vnc?.available" class="space-y-3"><div class="flex flex-wrap items-center gap-2"><code class="rounded border bg-muted px-3 py-2 text-sm">{{ vnc.url }}</code><Button variant="outline" size="sm" @click="copy(vnc.url || '')">复制</Button></div><p class="text-xs text-muted-foreground">主机：{{ vnc.host }}，端口：{{ vnc.port }}，显示：{{ vnc.display }}。也可以使用桌面 VNC 客户端连接。</p></div>
+          <p v-else class="text-sm text-muted-foreground">{{ vnc?.message || '尚未获取 VNC 信息。QEMU 实例创建时自动启用 VNC；容器实例需要宿主安装 xvfb、x11vnc、xterm。' }}</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>电源操作</CardTitle></CardHeader>
+        <CardContent class="space-y-4">
+          <div class="space-y-2"><Label>选择操作</Label><div class="flex flex-wrap gap-2"><Select :modelValue="''" :disabled="busy" @update:modelValue="(v:any)=> { if(v) power(v) }"><SelectTrigger class="w-64"><SelectValue placeholder="选择电源操作" /></SelectTrigger><SelectContent><SelectItem value="start" :disabled="inst.status==='running'">开机{{ inst.status==='running' ? '（已运行）' : '' }}</SelectItem><SelectItem value="stop" :disabled="inst.status!=='running'">关机{{ inst.status!=='running' ? '（未运行）' : '' }}</SelectItem><SelectItem value="restart" :disabled="inst.status!=='running'">重启</SelectItem><SelectItem value="hard_start" :disabled="inst.status==='running'">强制开机</SelectItem><SelectItem value="hard_stop" :disabled="inst.status!=='running'">强制关机</SelectItem><SelectItem value="hard_restart" :disabled="inst.status!=='running'">强制重启</SelectItem></SelectContent></Select><Button size="sm" variant="outline" :disabled="busy" @click="refreshStatus">刷新状态</Button></div><p class="text-xs text-muted-foreground">不可用选项为灰色且无法选择。</p></div>
+          <div class="flex flex-wrap items-end gap-2"><div class="grid gap-1"><Label>重装镜像</Label><Select :modelValue="reinstallImage" @update:modelValue="(v:any)=> reinstallImage=v"><SelectTrigger class="w-64"><SelectValue placeholder="选择镜像" /></SelectTrigger><SelectContent><SelectItem v-for="img in images" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }}）</SelectItem></SelectContent></Select></div><Button variant="destructive" size="sm" :disabled="busy || !reinstallImage" @click="power('reinstall')">重装</Button></div>
+          <div class="border-t pt-2"><Button variant="destructive" size="sm" :disabled="busy" @click="del">移入回收站</Button></div>
+        </CardContent>
+      </Card>
+        </TabsContent>
+        <TabsContent value="network" class="space-y-6 tab-panel">
+      <Card>
+        <CardHeader>
+          <CardTitle>SSH 访问</CardTitle>
+          <CardDescription>NAT 模式下创建实例时自动生成密码并映射 22 端口</CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <template v-if="sshCommand">
+            <div class="grid gap-2">
+              <Label class="text-muted-foreground text-xs">连接命令</Label>
+              <code class="bg-muted/40 block overflow-x-auto rounded-md border p-3 text-sm">{{ sshCommand }}</code>
+            </div>
+            <div class="grid gap-2">
+              <Label class="text-muted-foreground text-xs">root 密码</Label>
+              <div class="flex flex-wrap items-center gap-2">
+                <code class="bg-muted/40 rounded-md border px-3 py-2 text-sm tabular">
+                  {{ inst.ssh_password ? (showPassword ? inst.ssh_password : '••••••••••••••••') : '未生成' }}
+                </code>
+                <Button variant="outline" size="sm" @click="showPassword = !showPassword">{{ showPassword ? '隐藏' : '显示' }}</Button>
+                <Button variant="outline" size="sm" :disabled="busy" @click="rotatePassword">重置密码</Button>
+              </div>
+              <p class="text-muted-foreground text-xs">QEMU 虚拟机需客户机安装并运行 qemu-guest-agent，密码注入才会生效。</p>
+            </div>
+          </template>
+          <p v-else class="text-muted-foreground text-sm">
+            {{ inst.network?.mode === 'nat' ? '尚未生成 SSH 映射（实例可能创建于该功能上线前，可手动添加 22 端口映射）。' : '非 NAT 模式请直接使用独立 IP 连接。' }}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>NAT 端口映射</CardTitle>
+          <CardDescription>
+            把宿主机端口转发到实例端口；上限 {{ inst.max_nat_mappings ? `${inst.max_nat_mappings} 条` : '不限' }}，当前 {{ natMappings.length }} 条
+          </CardDescription>
+        </CardHeader>
+        <CardContent class="space-y-4">
+          <div v-if="natMappings.length" class="divide-y rounded-md border">
+            <div v-for="m in natMappings" :key="m.id" class="flex flex-wrap items-center justify-between gap-2 p-3 text-sm">
+              <div class="flex items-center gap-3">
+                <Badge variant="outline">{{ m.protocol.toUpperCase() }}</Badge>
+                <span class="font-medium tabular">{{ m.host_port }}</span>
+                <span class="text-muted-foreground">→</span>
+                <span class="tabular">实例 {{ m.guest_port }}</span>
+                <span v-if="m.remark" class="text-muted-foreground">{{ m.remark }}</span>
+              </div>
+              <Button variant="ghost" size="sm" class="text-destructive" :disabled="busy" @click="removeNAT(m.id)">删除</Button>
+            </div>
+          </div>
+          <p v-else class="text-muted-foreground text-sm">暂无映射。</p>
+
+          <form class="grid gap-3 sm:grid-cols-5" @submit.prevent="addNAT">
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">协议</Label>
+              <Select v-model="natForm.protocol">
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="tcp">TCP</SelectItem>
+                  <SelectItem value="udp">UDP</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">实例端口 *</Label>
+              <Input :modelValue="natForm.guest_port" @update:modelValue="(v:any)=> natForm.guest_port=v" placeholder="80" inputmode="numeric" />
+            </div>
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">宿主端口（留空自动）</Label>
+              <Input :modelValue="natForm.host_port" @update:modelValue="(v:any)=> natForm.host_port=v" placeholder="自动分配" inputmode="numeric" />
+            </div>
+            <div class="grid gap-1">
+              <Label class="text-muted-foreground text-xs">备注</Label>
+              <Input :modelValue="natForm.remark" @update:modelValue="(v:any)=> natForm.remark=v" placeholder="网站" />
+            </div>
+            <div class="flex items-end">
+              <Button type="submit" class="w-full" :disabled="busy">添加映射</Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
         <Card>
           <CardHeader>
-            <div class="flex items-center justify-between gap-3"><div><CardTitle>网络检测</CardTitle><CardDescription>检查被控节点可见的实例网卡与外部连通性</CardDescription></div><div class="flex gap-2"><Button variant="outline" size="sm" :disabled="networkLoading" @click="checkNetwork">{{ networkLoading ? '检测中...' : '检测网络' }}</Button><Button size="sm" :disabled="configureBusy" @click="configureNetwork">{{ configureBusy ? '配置中...' : '配置网络' }}</Button></div></div>
+            <div class="flex items-center justify-between gap-3"><div><CardTitle>网络检测</CardTitle><CardDescription>检查被控节点可见的实例网卡与外部连通性</CardDescription></div><div class="flex gap-2"><Button variant="outline" size="sm" :disabled="networkLoading" @click="checkNetwork">{{ networkLoading ? '检测中...' : '检测网络' }}</Button><Button size="sm" :disabled="busy" @click="configureNetwork">{{ configureBusy ? '配置中...' : '配置网络' }}</Button></div></div>
           </CardHeader>
           <CardContent class="space-y-4">
             <div v-if="network" class="flex items-center gap-2 text-sm"><Badge :variant="network.reachable ? 'default' : 'destructive' as any">{{ network.reachable ? '网络正常' : '网络异常' }}</Badge><span v-if="network.latency_ms">延迟 {{ network.latency_ms.toFixed(1) }} ms</span></div>
@@ -469,17 +545,12 @@ onBeforeUnmount(() => {
             <div v-else class="text-sm text-muted-foreground">暂无网卡信息。</div>
           </CardContent>
         </Card>
-      </div>
-
-      <Card>
-        <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>VNC 连接</CardTitle><CardDescription>通过主控内置 WebSocket 代理使用 noVNC，浏览器无需安装 VNC 客户端</CardDescription></div><div class="flex gap-2"><Button :disabled="vncLoading" @click="loadVNC">{{ vncLoading ? '连接中...' : consoleOpen ? '重连 VNC' : '连接 VNC' }}</Button><Button variant="outline" @click="openConsoleWindow">新窗口打开</Button><Button v-if="consoleOpen" variant="outline" @click="disconnectVNC">断开</Button><Badge v-if="vncConnected" variant="outline">已连接</Badge><Badge v-else-if="consoleOpen" variant="outline">未连接</Badge></div></div></CardHeader>
-        <CardContent>
-          <div v-if="consoleOpen" ref="vncTarget" class="h-[420px] w-full overflow-hidden rounded-md bg-black" />
-          <div v-else-if="vnc?.available" class="space-y-3"><div class="flex flex-wrap items-center gap-2"><code class="rounded border bg-muted px-3 py-2 text-sm">{{ vnc.url }}</code><Button variant="outline" size="sm" @click="copy(vnc.url || '')">复制</Button></div><p class="text-xs text-muted-foreground">主机：{{ vnc.host }}，端口：{{ vnc.port }}，显示：{{ vnc.display }}。也可以使用桌面 VNC 客户端连接。</p></div>
-          <p v-else class="text-sm text-muted-foreground">{{ vnc?.message || '尚未获取 VNC 信息。QEMU 实例创建时自动启用 VNC；容器实例需要宿主安装 xvfb、x11vnc、xterm。' }}</p>
-        </CardContent>
-      </Card>
-
+          <FirewallPanel :instance-id="id" :disabled="busy" @busy-change="taskBusy = $event" @settled="refreshAfterTask" />
+        </TabsContent>
+        <TabsContent value="recovery" force-mount v-show="activeTab === 'recovery'" class="space-y-6 tab-panel">
+          <RecoveryPanel :instance="inst" :disabled="!!taskBusy || !!actionLoading || configureBusy || passwordBusy || natBusy" @busy-change="recoveryBusy = $event" @updated="inst = $event" @settled="refreshAfterTask" />
+        </TabsContent>
+        <TabsContent value="logs" class="space-y-6 tab-panel">
       <Card>
         <CardHeader><div class="flex items-center justify-between gap-3"><div><CardTitle>操作日志</CardTitle><CardDescription>创建、电源、网络配置和错误记录</CardDescription></div><Button variant="outline" size="sm" :disabled="logsLoading" @click="loadLogs">{{ logsLoading ? '刷新中...' : '刷新日志' }}</Button></div></CardHeader>
         <CardContent>
@@ -490,19 +561,14 @@ onBeforeUnmount(() => {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle>电源操作</CardTitle></CardHeader>
-        <CardContent class="space-y-4">
-          <div class="space-y-2"><Label>选择操作</Label><div class="flex flex-wrap gap-2"><Select :modelValue="''" @update:modelValue="(v:any)=> { if(v) power(v) }"><SelectTrigger class="w-64"><SelectValue placeholder="选择电源操作" /></SelectTrigger><SelectContent><SelectItem value="start" :disabled="inst.status==='running'">开机{{ inst.status==='running' ? '（已运行）' : '' }}</SelectItem><SelectItem value="stop" :disabled="inst.status!=='running'">关机{{ inst.status!=='running' ? '（未运行）' : '' }}</SelectItem><SelectItem value="restart" :disabled="inst.status!=='running'">重启</SelectItem><SelectItem value="hard_start" :disabled="inst.status==='running'">强制开机</SelectItem><SelectItem value="hard_stop" :disabled="inst.status!=='running'">强制关机</SelectItem><SelectItem value="hard_restart" :disabled="inst.status!=='running'">强制重启</SelectItem></SelectContent></Select><Button size="sm" variant="outline" :disabled="!!actionLoading" @click="refreshStatus">刷新状态</Button></div><p class="text-xs text-muted-foreground">不可用选项为灰色且无法选择。</p></div>
-          <div class="flex flex-wrap items-end gap-2"><div class="grid gap-1"><Label>重装镜像</Label><Select :modelValue="reinstallImage" @update:modelValue="(v:any)=> reinstallImage=v"><SelectTrigger class="w-64"><SelectValue placeholder="选择镜像" /></SelectTrigger><SelectContent><SelectItem v-for="img in images" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }}）</SelectItem></SelectContent></Select></div><Button variant="destructive" size="sm" :disabled="!!actionLoading || !reinstallImage" @click="power('reinstall')">重装</Button></div>
-          <div class="border-t pt-2"><Button variant="destructive" size="sm" @click="del">删除实例</Button></div>
-        </CardContent>
-      </Card>
+        </TabsContent>
+      </TabsRoot>
     </div>
+    <ResizeDialog v-if="inst" :open="resizeOpen" :instance="inst" :disabled="busy" @update:open="resizeOpen = $event" @busy-change="taskBusy = $event" @updated="inst = $event" @settled="refreshAfterTask" />
+    <MigrationDialog v-if="inst" :open="migrationOpen" :instance="inst" :disabled="busy" @update:open="migrationOpen = $event" @busy-change="taskBusy = $event" @updated="inst = $event" @settled="refreshAfterTask" />
     <ConfirmDialog :open="confirmNatOpen" @update:open="(v:boolean)=> confirmNatOpen=v" :title="$t('confirm.deleteNatTitle')" :description="$t('confirm.deleteNatDesc')" danger @confirm="doRemoveNAT" />
     <ConfirmDialog :open="confirmPasswordOpen" @update:open="(v:boolean)=> confirmPasswordOpen=v" :title="$t('confirm.rotatePasswordTitle')" :description="$t('confirm.rotatePasswordDesc')" danger @confirm="doRotatePassword" />
     <ConfirmDialog :open="confirmNetworkOpen" @update:open="(v:boolean)=> confirmNetworkOpen=v" :title="$t('confirm.configureNetworkTitle')" :description="$t('confirm.configureNetworkDesc')" danger @confirm="doConfigureNetwork" />
     <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doDelete" />
   </div>
-    <FirewallPanel v-if="inst" :instance-id="id" class="mt-5" />
 </template>

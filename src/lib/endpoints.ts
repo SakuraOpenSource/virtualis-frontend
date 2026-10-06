@@ -6,7 +6,7 @@ import type {
   HostNetworkSummary,
   NATMapping,
   InstanceOperationLog
-  , VPC, VPCInput, FirewallRule, FirewallInput, FreeIPEntry, IPPoolOverview, IPPoolInput, IPPoolEntry
+  , BatchAction, BatchResult, Snapshot, Backup, VPC, VPCInput, FirewallRule, FirewallInput, FreeIPEntry, IPPoolOverview, IPPoolInput, IPPoolEntry
 } from './types'
 
 interface PageQuery { page?: number; page_size?: number }
@@ -84,7 +84,23 @@ export const virtualisApi = {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
-  async deleteInstance(id: number) { await http.delete(`/instances/${id}`) },
+  async migrate(id: number, payload: { target_agent_id: number; vpc_id?: number; ip_pool_entry_id?: number; network?: NetworkConfig }) {
+    return (await http.post<VirtualisInstance>(`/instances/${id}/migrate`, payload, longTask)).data
+  },
+  async resize(id: number, payload: { spec: VirtualisInstance['spec']; network?: NetworkConfig }) {
+    return (await http.patch<VirtualisInstance>(`/instances/${id}/spec`, payload, longTask)).data
+  },
+  async deleteInstance(id: number) { await http.delete(`/instances/${id}`, longTask) },
+  async trash(query: PageQuery = {}) {
+    return (await http.get<Page<VirtualisInstance>>('/trash', { params: query })).data
+  },
+  async restoreTrash(id: number) {
+    return (await http.post<VirtualisInstance>(`/trash/${id}/restore`, {}, longTask)).data
+  },
+  async purgeTrash(id: number) { await http.delete(`/trash/${id}`, longTask) },
+  async batch(ids: number[], action: BatchAction) {
+    return (await http.post<BatchResult>('/instances/batch', { ids: [...new Set(ids)], action }, longTask)).data
+  },
   async power(id: number, action: string, image_id?: number | null) {
     const body: Record<string, unknown> = { action }
     if (image_id != null) body.image_id = image_id
@@ -153,6 +169,38 @@ export const virtualisApi = {
     return data
   },
   async deleteImage(id: number) { await http.delete(`/images/${id}`) },
+}
+
+// Recovery is synchronous; never cut an archive/restore request off at a short UI timeout.
+export const LONG_TASK_TIMEOUT = 2 * 60 * 60 * 1000
+const longTask = { timeout: LONG_TASK_TIMEOUT }
+export const recoveryApi = {
+  async snapshots(id: number) {
+    return (await http.get<{ items: Snapshot[] | null }>(`/instances/${id}/snapshots`)).data.items ?? []
+  },
+  async backups(id: number) {
+    return (await http.get<{ items: Backup[] | null }>(`/instances/${id}/backups`)).data.items ?? []
+  },
+  async createSnapshot(id: number, payload: { name: string; remark?: string }) {
+    return (await http.post<Snapshot>(`/instances/${id}/snapshots`, payload, longTask)).data
+  },
+  async restoreSnapshot(id: number, sid: number) {
+    return (await http.post<VirtualisInstance>(`/instances/${id}/snapshots/${sid}/restore`, {}, longTask)).data
+  },
+  async deleteSnapshot(id: number, sid: number) {
+    await http.delete(`/instances/${id}/snapshots/${sid}`, longTask)
+  },
+  async createBackup(id: number, payload: { name: string; remark?: string }) {
+    return (await http.post<Backup>(`/instances/${id}/backups`, payload, longTask)).data
+  },
+  async restoreBackup(id: number, bid: number) {
+    return (await http.post<VirtualisInstance>(`/instances/${id}/backups/${bid}/restore`, {}, longTask)).data
+  },
+  async deleteBackup(id: number, bid: number) {
+    await http.delete(`/instances/${id}/backups/${bid}`, longTask)
+  },
+  // Browser streams the authenticated attachment; do not buffer GiB in an Axios Blob.
+  backupDownloadUrl(id: number, bid: number) { return `/api/instances/${id}/backups/${bid}/download` },
 }
 
 export const networkApi = {
