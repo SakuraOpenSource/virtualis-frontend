@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { agentApi, virtualisApi, networkApi } from '@/lib/endpoints'
-import type { FreeIPEntry, VPC } from '@/lib/types'
+import type { BatchAction, BatchResult, FreeIPEntry, VPC } from '@/lib/types'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import type {
@@ -32,6 +32,35 @@ const showCreate = ref(false)
 const confirmDeleteOpen = ref(false)
 const pendingDeleteId = ref<number | null>(null)
 const creating = ref(false)
+const selected = ref<number[]>([])
+const batchAction = ref<BatchAction>('start')
+const batchBusy = ref(false), deleteBusy = ref(false), confirmBatch = ref(false)
+const batchResults = ref<BatchResult | null>(null)
+const submittedIds = ref<number[]>([])
+const pageIds = computed(() => [...new Set(instances.value.map(item => item.id))])
+const selectedIds = computed(() => [...new Set(selected.value)].filter(id => pageIds.value.includes(id)))
+const allSelected = computed(() => pageIds.value.length > 0 && pageIds.value.every(id => selectedIds.value.includes(id)))
+const batchRows = computed(() => submittedIds.value.map(id => ({ id, ok: batchResults.value?.ok?.includes(id) ?? false, reason: batchResults.value?.failed?.find(row => row.id === id)?.reason || '服务端未返回结果，请检查日志后再重试' })))
+const actionLabels: Record<BatchAction, string> = { start: '开机', stop: '关机', restart: '重启', delete: '移入回收站' }
+function toggleSelection(id: number, checked: boolean) {
+  selected.value = checked ? [...new Set([...selectedIds.value, id])] : selectedIds.value.filter(value => value !== id)
+}
+async function runBatch() {
+  if (batchBusy.value || !selectedIds.value.length) return
+  batchBusy.value = true; batchResults.value = null
+  submittedIds.value = [...selectedIds.value]
+  try {
+    batchResults.value = await virtualisApi.batch(submittedIds.value, batchAction.value)
+    confirmBatch.value = false
+    await load()
+  } catch (e) {
+    error.value = errorMessage(e)
+    batchResults.value = { ok: [], failed: submittedIds.value.map(id => ({ id, reason: `请求失败，执行状态未知：${error.value}。请刷新并核对该实例的操作日志，不要盲目重试。` })) }
+    confirmBatch.value = false
+  }
+  finally { batchBusy.value = false }
+}
+let listRequest = 0
 
 const formName = ref('')
 const formAgentId = ref<string>('')
@@ -48,7 +77,7 @@ const vpcs = ref<VPC[]>([])
 const formIPEntry = ref('manual')
 const formVPC = ref('')
 let networkRequest = 0
-watch([formAgentId, formNetworkMode], async () => {
+watch([formAgentId, formNetworkMode, showCreate], async () => {
   const request = ++networkRequest
   formIPEntry.value = 'manual'; formVPC.value = ''; freeIPs.value = []; vpcs.value = []
   formIPv4.value = ''; formGateway.value = ''; formDNS.value = ''; formBridge.value = ''
@@ -108,12 +137,16 @@ const driverItems = computed(() => {
 const ifaceItems = computed(() => hostIfaces.value.filter(i => i.kind === 'bridge' || i.kind === 'physical' || i.kind === 'vlan'))
 const dedicatedAvailable = computed(() => hostIPv4Count.value >= 2)
 
+let hostNetworkRequest = 0
 async function loadAgentNetwork() {
+  const request = ++hostNetworkRequest
+  const agentId = formAgentId.value
   hostIfaces.value = []
   hostIPv4Count.value = 0
   if (!formAgentId.value) return
   try {
-    const summary = await agentApi.hostNetwork(parseInt(formAgentId.value))
+    const summary = await agentApi.hostNetwork(Number(agentId))
+    if (request !== hostNetworkRequest || agentId !== formAgentId.value) return
     hostIfaces.value = summary.interfaces ?? []
     hostIPv4Count.value = summary.ipv4_count ?? 0
   } catch { /* 节点暂时不可达时表单仍可用，仅无候选接口 */ }
@@ -125,13 +158,16 @@ const filteredImages = computed(() => {
 })
 
 async function load() {
+  const request = ++listRequest
+  selected.value = []
   loading.value = true
   error.value = ''
   try {
     const data = await virtualisApi.instances({ page: page.value, page_size: pageSize.value })
+    if (request !== listRequest) return
     instances.value = (data.items ?? []) as VirtualisInstance[]
     total.value = data.total
-  } catch (e) { error.value = errorMessage(e) } finally { loading.value=false }
+  } catch (e) { if (request === listRequest) error.value = errorMessage(e) } finally { if (request === listRequest) loading.value=false }
 }
 
 async function loadMeta() {
@@ -140,7 +176,8 @@ async function loadMeta() {
   try { agents.value = await agentApi.list() } catch {}
 }
 
-watch(formAgentId, () => {
+watch([formAgentId, showCreate], () => {
+  if (!showCreate.value) { ++hostNetworkRequest; return }
   if (!formAgentId.value) { formDriver.value = 'auto'; return }
   if (availableDriversForAgent.value.length && !availableDriversForAgent.value.includes(formDriver.value) && formDriver.value !== 'auto') {
     formDriver.value = 'auto'
@@ -202,9 +239,10 @@ function removeItem(id: number) {
 }
 
 async function doRemoveItem() {
-  if (pendingDeleteId.value === null) return
+  if (pendingDeleteId.value === null || deleteBusy.value || batchBusy.value) return
+  deleteBusy.value = true
   confirmDeleteOpen.value = false
-  try { await virtualisApi.deleteInstance(pendingDeleteId.value); toast.success('已删除'); await load() } catch (e) { toast.error(errorMessage(e)) }
+  try { await virtualisApi.deleteInstance(pendingDeleteId.value); toast.success('已移入回收站'); await load() } catch (e) { toast.error(errorMessage(e)) } finally { deleteBusy.value = false }
 }
 
 function statusVariant(s: string) {
@@ -230,6 +268,14 @@ onMounted(async () => { await load(); await loadMeta() })
     </PageHeader>
     <p v-if="!agents.length" class="text-sm text-amber-600 mb-2">暂无在线被控，请先在“被控节点”页添加并接入至少一个节点。</p>
     <ErrorAlert :message="error" />
+    <div class="mb-4 flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3">
+      <span class="text-sm">已选 {{ selectedIds.length }} 项 <span class="text-muted-foreground">（仅当前页，切页会清空）</span></span>
+      <select v-model="batchAction" data-testid="batch-action" aria-label="批量操作" :disabled="batchBusy || deleteBusy" class="h-9 rounded-md border bg-background px-3 text-sm"><option v-for="(label, action) in actionLabels" :key="action" :value="action">{{ label }}</option></select>
+      <Button data-testid="run-batch" size="sm" :disabled="!selectedIds.length || batchBusy || deleteBusy || loading" @click="confirmBatch = true">{{ batchBusy ? '执行中…' : '执行批量操作' }}</Button>
+      <Button size="sm" variant="ghost" :disabled="batchBusy || !selectedIds.length" @click="selected = []">清空选择</Button>
+      <RouterLink to="/admin/trash" class="ml-auto text-sm text-primary hover:underline">查看回收站</RouterLink>
+    </div>
+    <Card v-if="batchResults" data-testid="batch-results" class="mb-4"><CardContent class="p-4 space-y-2"><h2 class="text-sm font-medium">批量结果 · {{ batchRows.filter(row => row.ok).length }} 成功 / {{ batchRows.filter(row => !row.ok).length }} 失败或未确认</h2><ul class="divide-y text-sm"><li v-for="row in batchRows" :key="row.id" class="flex gap-3 py-2"><span>#{{ row.id }}</span><span :class="row.ok ? 'text-muted-foreground' : 'text-destructive'">{{ row.ok ? '成功' : row.reason }}</span></li></ul></CardContent></Card>
     <LoadingBlock v-if="loading" />
     <Card v-else>
       <CardContent class="p-0">
@@ -237,6 +283,7 @@ onMounted(async () => { await load(); await loadMeta() })
           <table class="w-full text-sm">
             <thead class="border-b bg-muted/30">
               <tr>
+                <th class="h-10 px-4 text-left"><input type="checkbox" aria-label="选择本页全部实例" :checked="allSelected" :indeterminate="selectedIds.length > 0 && !allSelected" :disabled="batchBusy || deleteBusy" class="size-4 accent-primary" @change="selected = ($event.target as HTMLInputElement).checked ? [...pageIds] : []" /></th>
                 <th class="h-10 px-4 text-left font-medium">ID</th>
                 <th class="h-10 px-4 text-left font-medium">名称</th>
                 <th class="h-10 px-4 text-left font-medium">被控</th>
@@ -250,6 +297,7 @@ onMounted(async () => { await load(); await loadMeta() })
             </thead>
             <tbody>
               <tr v-for="it in instances" :key="it.id" class="border-b hover:bg-muted/20">
+                <td class="px-4 py-2"><input type="checkbox" :aria-label="`选择实例 #${it.id}`" :checked="selectedIds.includes(it.id)" :disabled="batchBusy || deleteBusy" class="size-4 accent-primary" @change="toggleSelection(it.id, ($event.target as HTMLInputElement).checked)" /></td>
                 <td class="px-4 py-2">{{ it.id }}</td>
                 <td class="px-4 py-2"><RouterLink :to="`/admin/instances/${it.id}`" class="text-primary hover:underline">{{ it.name }}</RouterLink></td>
                 <td class="px-4 py-2"><Badge variant="outline">{{ formatAgent((it as any).agent) }}</Badge></td>
@@ -261,17 +309,17 @@ onMounted(async () => { await load(); await loadMeta() })
                 <td class="px-4 py-2 text-right">
                   <div class="flex justify-end gap-2">
                     <Button variant="outline" size="sm" @click="$router.push(`/admin/instances/${it.id}`)">详情</Button>
-                    <Button variant="destructive" size="sm" @click="removeItem(it.id)">删除</Button>
+                    <Button variant="destructive" size="sm" :disabled="batchBusy || deleteBusy" @click="removeItem(it.id)">移入回收站</Button>
                   </div>
                 </td>
               </tr>
-              <tr v-if="instances.length===0"><td colspan="9" class="text-center py-8 text-muted-foreground">暂无实例</td></tr>
+              <tr v-if="instances.length===0"><td colspan="10" class="text-center py-8 text-muted-foreground">暂无实例</td></tr>
             </tbody>
           </table>
         </div>
       </CardContent>
     </Card>
-    <Pager :page="page" :pageSize="pageSize" :total="total" @update:page="(v:number)=>{ page=v; load() }" />
+    <Pager :page="page" :pageSize="pageSize" :total="total" :disabled="batchBusy || deleteBusy || loading" @update:page="(v:number)=>{ if (!batchBusy && !deleteBusy) { selected=[]; page=v; load() } }" />
 
     <Dialog :open="showCreate" @update:open="(v:boolean)=> showCreate=v">
       <DialogContent class="max-h-[88vh] max-w-2xl overflow-y-auto">
@@ -386,6 +434,7 @@ onMounted(async () => { await load(); await loadMeta() })
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doRemoveItem" />
+    <ConfirmDialog :open="confirmBatch" :busy="batchBusy" :danger="batchAction !== 'start'" :title="`批量${actionLabels[batchAction]} ${selectedIds.length} 个实例`" :description="batchAction === 'delete' ? '仅操作本页已选实例。它们将关机并移入回收站；每条执行结果都会单独列出。' : '仅操作本页已选实例。关机或重启会中断服务；失败项不会阻止其他实例执行，请逐条核对结果。'" @update:open="v => { if (!batchBusy) confirmBatch = v }" @confirm="runBatch" />
+    <ConfirmDialog :busy="deleteBusy" :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doRemoveItem" />
   </div>
 </template>

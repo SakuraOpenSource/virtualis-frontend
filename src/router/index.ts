@@ -27,6 +27,7 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: '/admin/instances' },
       { path: 'instances', name: 'instances', component: () => import('@/views/admin/InstancesView.vue') },
       { path: 'instances/:id', name: 'instance-detail', component: () => import('@/views/admin/InstanceDetailView.vue'), props: true },
+      { path: 'trash', name: 'trash', component: () => import('@/views/admin/TrashView.vue') },
       { path: 'images', name: 'images', component: () => import('@/views/admin/ImagesView.vue') },
       { path: 'agents', name: 'agents', component: () => import('@/views/admin/AgentsView.vue') },
       { path: 'networks', name: 'networks', component: () => import('@/views/admin/NetworksView.vue') },

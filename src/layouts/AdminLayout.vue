@@ -5,7 +5,7 @@ import { useSiteStore } from '@/stores/site'
 import { useThemeStore } from '@/stores/theme'
 import UserMenu from '@/components/app/UserMenu.vue'
 import { Button } from '@/components/ui/button'
-import { Server, HardDrive, Settings, KeyRound, User, Menu, Moon, Sun, Monitor, Network } from 'lucide-vue-next'
+import { Server, HardDrive, Settings, KeyRound, User, Menu, Moon, Sun, Monitor, Network, Trash2 } from 'lucide-vue-next'
 
 const site = useSiteStore()
 const theme = useThemeStore()
@@ -14,6 +14,7 @@ const collapsed = ref(false)
 
 const nav = [
   { to: '/admin/instances', label: '实例', icon: Server, name: 'instances' },
+  { to: '/admin/trash', label: '回收站', icon: Trash2, name: 'trash' },
   { to: '/admin/images', label: '镜像', icon: HardDrive, name: 'images' },
   { to: '/admin/agents', label: '被控节点', icon: Network, name: 'agents' },
   { to: '/admin/networks', label: 'VPC 与 IP 池', icon: Network, name: 'networks' },

@@ -11,8 +11,10 @@ const props = withDefaults(defineProps<{
   confirmText?: string
   cancelText?: string
   danger?: boolean
+  busy?: boolean
 }>(), {
   danger: false,
+  busy: false,
 })
 
 const emit = defineEmits<{
@@ -25,11 +27,11 @@ const cancelLabel = computed(() => props.cancelText || t('common.cancel'))
 const confirmLabel = computed(() => props.confirmText || t('common.confirm'))
 
 function onOpenChange(value: boolean) {
-  emit('update:open', value)
+  if (!props.busy) emit('update:open', value)
 }
 
 function onConfirm() {
-  emit('confirm')
+  if (!props.busy) emit('confirm')
 }
 </script>
 <template>
@@ -40,8 +42,8 @@ function onConfirm() {
         <DialogDescription>{{ props.description }}</DialogDescription>
       </DialogHeader>
       <DialogFooter>
-        <Button variant="outline" @click="onOpenChange(false)">{{ cancelLabel }}</Button>
-        <Button :variant="props.danger ? 'destructive' : 'default'" @click="onConfirm">{{ confirmLabel }}</Button>
+        <Button variant="outline" :disabled="props.busy" @click="onOpenChange(false)">{{ cancelLabel }}</Button>
+        <Button :variant="props.danger ? 'destructive' : 'default'" :disabled="props.busy" @click="onConfirm">{{ props.busy ? '处理中…' : confirmLabel }}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>
