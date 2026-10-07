@@ -3,6 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { http } from '@/lib/api'
 import { instance, globals, mockRoute } from './helpers'
 import InstanceDetailView from '@/views/admin/InstanceDetailView.vue'
+import SecurityGroupPanel from '@/components/app/SecurityGroupPanel.vue'
+import FirewallPanel from '@/components/app/FirewallPanel.vue'
 
 vi.mock('vue-router', () => mockRoute())
 vi.mock('@novnc/novnc', () => ({ default: class {} }))
@@ -10,6 +12,41 @@ vi.mock('vue-i18n', () => ({ useI18n: () => ({ t: (v: string) => v }) }))
 afterEach(() => vi.useRealTimers())
 
 describe('instance detail layout', () => {
+  it('integrates group binding in the existing network tab and refreshes effective rules after local firewall changes', async () => {
+    let bindingReads = 0
+    http.defaults.adapter = async config => {
+      if (config.url === '/instances/4/security-groups') bindingReads++
+      const data = config.url === '/instances/4' ? instance : config.url === '/instances/4/security-groups' ? { security_group_ids: [], groups: [], effective_rules: [], firewall_policy: { ingress: 'drop', egress: 'accept' } } : { items: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    const wrapper = mount(InstanceDetailView, { global: globals }); await flushPromises()
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('mousedown', { button: 0 }); await flushPromises()
+    expect(wrapper.findComponent(SecurityGroupPanel).exists()).toBe(true)
+    expect(wrapper.get('[data-testid="effective-policy"]').text()).toContain('入站：丢弃')
+    const before = bindingReads
+    wrapper.getComponent(FirewallPanel).vm.$emit('settled'); await flushPromises()
+    expect(bindingReads).toBeGreaterThan(before)
+    wrapper.unmount()
+  })
+  it('edits dedicated routed/bridge controls without replacing desired CIDR with observed runtime /32', async () => {
+    const requests: any[] = [], dedicated = { ...instance, network: { mode: 'dedicated', dedicated_mode: 'routed', bridge: 'eth0', ipv4: '198.51.100.20/24', gateway: '198.51.100.1', dns: ['1.1.1.1'], bandwidth_mbps: 50, traffic_gb: 100 } }
+    http.defaults.adapter = async config => {
+      requests.push(config)
+      const data = config.url === '/instances/4' ? dedicated : config.url === '/admin/agents/1/network' ? { ipv4_count: 1, interfaces: [{ name: 'eth0', kind: 'physical', state: 'up' }, { name: 'br0', kind: 'bridge', state: 'up' }] } : config.url === '/instances/4/network/configure' ? { instance: dedicated, operation_id: 'network-1' } : config.url === '/instances/4/network' ? { network: { reachable: true, interfaces: [{ ipv4: ['198.51.100.20/32'] }] } } : { items: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    const wrapper = mount(InstanceDetailView, { global: globals }); await flushPromises()
+    const vm = wrapper.vm as any
+    await vm.checkNetwork(); await flushPromises()
+    expect(vm.networkForm.ipv4).toBe('198.51.100.20/24')
+    await wrapper.findAll('[role="tab"]')[1]!.trigger('mousedown', { button: 0 }); await flushPromises()
+    await wrapper.get('[data-testid="detail-dedicated-mode"]').setValue('bridge')
+    await wrapper.get('[data-testid="detail-dedicated-interface"]').setValue('br0')
+    await vm.doConfigureNetwork(); await flushPromises()
+    const payload = JSON.parse(requests.find(r => r.url === '/instances/4/network/configure').data)
+    expect(payload.network).toEqual({ ...dedicated.network, dedicated_mode: 'bridge', bridge: 'br0' })
+    wrapper.unmount()
+  })
   it('contains a single root and four accessible working detail tabs', async () => {
     http.defaults.adapter = async config => ({ data: config.url === '/instances/4' ? instance : { items: [] }, status: 200, statusText: 'OK', headers: {}, config })
     const wrapper = mount(InstanceDetailView, { global: globals })
