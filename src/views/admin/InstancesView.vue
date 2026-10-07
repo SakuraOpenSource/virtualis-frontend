@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { agentApi, virtualisApi, networkApi } from '@/lib/endpoints'
-import type { BatchAction, BatchResult, FreeIPEntry, VPC } from '@/lib/types'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { agentApi, virtualisApi, networkApi, securityGroupApi } from '@/lib/endpoints'
+import type { BatchAction, BatchResult, FreeIPEntry, NetworkConfig, SecurityGroup, VPC } from '@/lib/types'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
 import type {
@@ -11,6 +11,7 @@ import PageHeader from '@/components/app/PageHeader.vue'
 import LoadingBlock from '@/components/app/LoadingBlock.vue'
 import ErrorAlert from '@/components/app/ErrorAlert.vue'
 import ConfirmDialog from '@/components/app/ConfirmDialog.vue'
+import SecurityGroupSelect from '@/components/app/SecurityGroupSelect.vue'
 import Pager from '@/components/app/Pager.vue'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -32,6 +33,7 @@ const showCreate = ref(false)
 const confirmDeleteOpen = ref(false)
 const pendingDeleteId = ref<number | null>(null)
 const creating = ref(false)
+const createError = ref('')
 const selected = ref<number[]>([])
 const batchAction = ref<BatchAction>('start')
 const batchBusy = ref(false), deleteBusy = ref(false), confirmBatch = ref(false)
@@ -74,21 +76,39 @@ const formImageId = ref<string>('none')
 const formNetworkMode = ref<'nat' | 'dedicated' | 'vpc' | 'none'>('nat')
 const freeIPs = ref<FreeIPEntry[]>([])
 const vpcs = ref<VPC[]>([])
-const formIPEntry = ref('manual')
+const formIPEntry = ref('auto')
+const formDedicatedMode = ref<NonNullable<NetworkConfig['dedicated_mode']>>('auto')
+const securityGroups = ref<SecurityGroup[]>([]), formSecurityGroups = ref<number[]>([])
+const groupsLoading = ref(false), groupsError = ref('')
+const networkOptionsLoading = ref(false), networkOptionsError = ref(''), hostNetworkLoading = ref(false), hostNetworkError = ref('')
 const formVPC = ref('')
-let networkRequest = 0
-watch([formAgentId, formNetworkMode, showCreate], async () => {
+let networkRequest = 0, groupsRequest = 0
+async function loadGroups() {
+  const current = ++groupsRequest; groupsLoading.value = true; groupsError.value = ''; securityGroups.value = []
+  try { const rows = await securityGroupApi.list(); if (current === groupsRequest) securityGroups.value = rows }
+  catch (e) { if (current === groupsRequest) groupsError.value = errorMessage(e) }
+  finally { if (current === groupsRequest) groupsLoading.value = false }
+}
+watch(showCreate, open => { createError.value = ''; if (open) void loadGroups(); else { ++groupsRequest; groupsLoading.value = false } })
+async function loadNetworkOptions() {
   const request = ++networkRequest
-  formIPEntry.value = 'manual'; formVPC.value = ''; freeIPs.value = []; vpcs.value = []
-  formIPv4.value = ''; formGateway.value = ''; formDNS.value = ''; formBridge.value = ''
-  if (!formAgentId.value) return
+  networkOptionsLoading.value = false; networkOptionsError.value = ''; freeIPs.value = []; vpcs.value = []
+  if (!formAgentId.value || !showCreate.value || !['dedicated', 'vpc'].includes(formNetworkMode.value)) return
+  networkOptionsLoading.value = true
   try {
     const agentID = Number(formAgentId.value)
     if (formNetworkMode.value === 'dedicated') { const items = await networkApi.freeIPs(agentID); if (request === networkRequest) freeIPs.value = items }
     if (formNetworkMode.value === 'vpc') { const items = await networkApi.vpcs(agentID); if (request === networkRequest) vpcs.value = items }
-  } catch (e) { if (request === networkRequest) toast.error(errorMessage(e)) }
+  } catch (e) { if (request === networkRequest) networkOptionsError.value = errorMessage(e) }
+  finally { if (request === networkRequest) networkOptionsLoading.value = false }
+}
+watch([formAgentId, formNetworkMode, showCreate], () => {
+  formIPEntry.value = 'auto'; formVPC.value = ''; freeIPs.value = []; vpcs.value = []
+  formIPv4.value = ''; formGateway.value = ''; formDNS.value = ''; formBridge.value = ''
+  void loadNetworkOptions()
 })
 watch(formIPEntry, value => {
+  formIPv4.value = ''; formGateway.value = ''; formDNS.value = ''; formBridge.value = ''
   const entry = freeIPs.value.find(i => String(i.id) === value)
   if (entry) { formIPv4.value = entry.cidr; formGateway.value = entry.gateway; formDNS.value = entry.dns.join(','); formBridge.value = entry.interface }
 })
@@ -134,8 +154,8 @@ const driverItems = computed(() => {
 })
 
 // 独立 IP 模式的挂载接口下拉项：优先软件网桥，其次物理网卡。
-const ifaceItems = computed(() => hostIfaces.value.filter(i => i.kind === 'bridge' || i.kind === 'physical' || i.kind === 'vlan'))
-const dedicatedAvailable = computed(() => hostIPv4Count.value >= 2)
+const ifaceItems = computed(() => hostIfaces.value.filter(i => ['bridge', 'physical', 'vlan'].includes(i.kind) && i.state?.toLowerCase() !== 'down'))
+const dedicatedAvailable = computed(() => ifaceItems.value.length > 0 && freeIPs.value.length > 0)
 
 let hostNetworkRequest = 0
 async function loadAgentNetwork() {
@@ -143,13 +163,16 @@ async function loadAgentNetwork() {
   const agentId = formAgentId.value
   hostIfaces.value = []
   hostIPv4Count.value = 0
+  hostNetworkError.value = ''; hostNetworkLoading.value = false
   if (!formAgentId.value) return
+  hostNetworkLoading.value = true
   try {
     const summary = await agentApi.hostNetwork(Number(agentId))
     if (request !== hostNetworkRequest || agentId !== formAgentId.value) return
     hostIfaces.value = summary.interfaces ?? []
     hostIPv4Count.value = summary.ipv4_count ?? 0
-  } catch { /* 节点暂时不可达时表单仍可用，仅无候选接口 */ }
+  } catch (e) { if (request === hostNetworkRequest) hostNetworkError.value = errorMessage(e) }
+  finally { if (request === hostNetworkRequest) hostNetworkLoading.value = false }
 }
 
 const filteredImages = computed(() => {
@@ -174,11 +197,12 @@ async function loadMeta() {
   try { drivers.value = await virtualisApi.drivers() } catch {}
   try { images.value = await virtualisApi.images() } catch {}
   try { agents.value = await agentApi.list() } catch {}
+
 }
 
 watch([formAgentId, showCreate], () => {
-  if (!showCreate.value) { ++hostNetworkRequest; return }
-  if (!formAgentId.value) { formDriver.value = 'auto'; return }
+  if (!showCreate.value) { ++hostNetworkRequest; hostNetworkLoading.value = false; return }
+  if (!formAgentId.value) { formDriver.value = 'auto'; void loadAgentNetwork(); return }
   if (availableDriversForAgent.value.length && !availableDriversForAgent.value.includes(formDriver.value) && formDriver.value !== 'auto') {
     formDriver.value = 'auto'
   }
@@ -198,9 +222,24 @@ function parseCpu(value: string) {
 }
 
 async function create() {
+  if (creating.value) return
+  createError.value = ''
   if (!formName.value.trim()) { toast.error('请输入名称'); return }
   if (!formAgentId.value) { toast.error('请选择被控节点（主控不负责创建实例）'); return }
+  if (groupsLoading.value) { createError.value = '安全组目录加载中，请稍候'; return }
+  if (formSecurityGroups.value.length && (groupsError.value || formSecurityGroups.value.some(id => !securityGroups.value.some(group => group.id === id)))) { createError.value = '所选安全组状态未确认，请刷新安全组目录'; return }
+  if ((formNetworkMode.value === 'vpc' || formNetworkMode.value === 'dedicated' && formIPEntry.value !== 'manual') && (networkOptionsLoading.value || networkOptionsError.value)) { createError.value = networkOptionsError.value || '网络选项加载中，请稍候'; return }
   if (formNetworkMode.value === 'vpc' && !formVPC.value) { toast.error('请选择 VPC 网络'); return }
+  if (formNetworkMode.value === 'dedicated') {
+    if (hostNetworkLoading.value || hostNetworkError.value) { createError.value = hostNetworkError.value || '上联信息加载中，请稍候'; return }
+    if (!ifaceItems.value.length) { createError.value = '没有可用上联接口，请检查被控节点网络'; return }
+    if (formIPEntry.value === 'auto' && !freeIPs.value.length) { createError.value = '没有空闲 IP 池地址，请在 VPC 与 IP 池中配置地址后刷新'; return }
+    if (formIPEntry.value === 'manual' && !formIPv4.value.trim()) { createError.value = '手动模式必须填写 IPv4 / CIDR；自动分配请选择每次创建自动分配'; return }
+    if (!['auto', 'manual'].includes(formIPEntry.value) && !freeIPs.value.some(entry => String(entry.id) === formIPEntry.value)) { createError.value = '所选 IP 池地址不可用，请刷新后重新选择'; return }
+    const iface = hostIfaces.value.find(iface => iface.name === formBridge.value)
+    if (formDedicatedMode.value === 'bridge' && iface?.kind !== 'bridge') { createError.value = 'bridge 必须选择已存在的 Linux 网桥'; return }
+  }
+  if (formSecurityGroups.value.length > 16) { createError.value = '每个实例最多绑定 16 个安全组'; return }
   // CPU 支持小数：整数核只发 cpu；小数核换算为毫核，cpu 存向上取整的核数。
   const cpuMilli = Number.isInteger(formCpu.value) ? undefined : Math.round(formCpu.value * 1000)
   creating.value = true
@@ -213,9 +252,10 @@ async function create() {
       spec: { cpu: Math.ceil(formCpu.value), cpu_milli: cpuMilli, memory_mb: formMem.value, disk_gb: formDisk.value, arch: formArch.value },
       network: {
         mode: formNetworkMode.value,
+        dedicated_mode: formNetworkMode.value === 'dedicated' ? formDedicatedMode.value : undefined,
         bridge: formBridge.value.trim() || undefined,
         mac: formMAC.value.trim() || undefined,
-        ipv4: formIPv4.value.trim() || undefined,
+        ipv4: formNetworkMode.value === 'dedicated' && formIPEntry.value === 'auto' ? undefined : formIPv4.value.trim() || undefined,
         gateway: formGateway.value.trim() || undefined,
         dns: formDNS.value.split(',').map(value => value.trim()).filter(Boolean),
         bandwidth_mbps: formBandwidth.value || undefined,
@@ -223,14 +263,16 @@ async function create() {
       image_id: formImageId.value !== 'none' ? parseInt(formImageId.value) : null,
       max_nat_mappings: formMaxNATMappings.value || 0,
       auto_password: formAutoPassword.value,
-      ip_pool_entry_id: formNetworkMode.value === 'dedicated' && formIPEntry.value !== 'manual' ? Number(formIPEntry.value) : undefined,
+      ip_pool_entry_id: formNetworkMode.value === 'dedicated' && !['manual', 'auto'].includes(formIPEntry.value) ? Number(formIPEntry.value) : undefined,
+      security_group_ids: [...new Set(formSecurityGroups.value)],
       vpc_id: formNetworkMode.value === 'vpc' ? Number(formVPC.value) : undefined,
     })
     toast.success('实例已在被控节点上创建')
     showCreate.value = false
+    formSecurityGroups.value = []; formDedicatedMode.value = 'auto'
     formName.value=''; formImageId.value='none'; formNetworkMode.value='nat'; formBridge.value=''; formMAC.value=''; formIPv4.value=''; formGateway.value=''; formDNS.value=''; formBandwidth.value=0; hostIfaces.value=[]; hostIPv4Count.value=0; formMaxNATMappings.value=0; formAutoPassword.value=true
     await load()
-  } catch (e) { toast.error(errorMessage(e)) } finally { creating.value=false }
+  } catch (e) { createError.value = errorMessage(e); toast.error(createError.value) } finally { creating.value=false }
 }
 
 function removeItem(id: number) {
@@ -258,6 +300,7 @@ function formatAgent(agent?: VirtualisAgent | null) {
 }
 
 onMounted(async () => { await load(); await loadMeta() })
+onBeforeUnmount(() => { ++listRequest; ++hostNetworkRequest; ++networkRequest; ++groupsRequest })
 </script>
 <template>
   <div>
@@ -321,13 +364,17 @@ onMounted(async () => { await load(); await loadMeta() })
     </Card>
     <Pager :page="page" :pageSize="pageSize" :total="total" :disabled="batchBusy || deleteBusy || loading" @update:page="(v:number)=>{ if (!batchBusy && !deleteBusy) { selected=[]; page=v; load() } }" />
 
-    <Dialog :open="showCreate" @update:open="(v:boolean)=> showCreate=v">
+    <Dialog :open="showCreate" @update:open="(v:boolean)=> { if (!creating) showCreate=v }">
       <DialogContent class="max-h-[88vh] max-w-2xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>创建实例</DialogTitle>
           <DialogDescription>必须先选择被控节点，驱动与镜像选项由该节点的实际能力决定</DialogDescription>
         </DialogHeader>
-        <div class="space-y-4">
+        <ErrorAlert :message="createError" />
+        <ErrorAlert :message="groupsError" />
+        <p v-if="groupsLoading" role="status" class="text-sm text-muted-foreground">加载安全组目录中…</p>
+        <Button variant="outline" size="sm" :disabled="creating || groupsLoading" @click="loadGroups">刷新安全组目录</Button>
+        <fieldset data-testid="create-fields" :disabled="creating" class="space-y-4">
           <div class="grid gap-2"><Label>名称</Label><Input v-model="formName" placeholder="my-vm-01" /></div>
           <div class="grid grid-cols-2 gap-3">
             <div class="grid gap-2">
@@ -395,26 +442,25 @@ onMounted(async () => { await load(); await loadMeta() })
             </div>
           </div>
           <div class="space-y-4 rounded-md border p-4">
-            <div><div class="text-sm font-medium">虚拟网卡与网络</div><p class="text-xs text-muted-foreground">NAT 由被控自动配置默认网络（共享主机出口 IP）；独立 IP 把实例网卡直连主机网段，仅当主机有至少 2 个 IPv4 地址时可用。</p>
-              <p v-if="formAgentId && !dedicatedAvailable" class="text-xs text-amber-600">该节点当前 {{ hostIPv4Count }} 个 IPv4 地址，独立 IP 模式不可用。</p>
+            <div><div class="text-sm font-medium">虚拟网卡与网络</div><p class="text-xs text-muted-foreground">NAT 共享主机出口 IP；独立 IP 通过物理上联路由或已存在的 Linux 网桥接入，不需要给主机额外绑定公网地址。</p>
+              <p v-if="formNetworkMode === 'dedicated' && !dedicatedAvailable" class="text-xs text-amber-600">独立 IP 自动分配需要可用上联接口和空闲 IP 池地址，请检查“VPC 与 IP 池”。</p>
             </div>
+            <ErrorAlert :message="networkOptionsError" />
+            <ErrorAlert v-if="formNetworkMode === 'dedicated'" :message="hostNetworkError" />
+            <p v-if="networkOptionsLoading || (formNetworkMode === 'dedicated' && hostNetworkLoading)" role="status" class="text-sm text-muted-foreground">加载网络选项中…</p>
+            <Button v-if="formNetworkMode === 'dedicated' || formNetworkMode === 'vpc'" type="button" variant="outline" size="sm" :disabled="creating || networkOptionsLoading || hostNetworkLoading" @click="loadNetworkOptions(); loadAgentNetwork()">刷新网络选项</Button>
             <div class="grid gap-3 sm:grid-cols-2">
-              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（共享主机 IP）</SelectItem><SelectItem value="dedicated" :disabled="!dedicatedAvailable">独立 IP（直连主机网段）</SelectItem><SelectItem value="vpc">VPC 私有网络</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
+              <div class="grid gap-2"><Label>网络模式</Label><Select v-model="formNetworkMode as any"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="nat">NAT（共享主机 IP）</SelectItem><SelectItem value="dedicated">独立 IP（路由 / 网桥）</SelectItem><SelectItem value="vpc">VPC 私有网络</SelectItem><SelectItem value="none">禁用网卡</SelectItem></SelectContent></Select></div>
               <div v-if="formNetworkMode === 'dedicated'" class="grid gap-2">
                 <Label>挂载接口</Label>
-                <Select v-model="formBridge">
-                  <SelectTrigger><SelectValue placeholder="自动选择物理网卡" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">自动选择物理网卡</SelectItem>
-                    <SelectItem v-for="iface in ifaceItems" :key="iface.name" :value="iface.name">{{ iface.name }}（{{ iface.kind }} · {{ (iface.ipv4 ?? []).join(', ') || '无 IPv4' }}）</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p class="text-xs text-muted-foreground">选择已存在的网桥或物理网卡；网桥直接挂载，物理网卡以 macvtap 直连。</p>
+                <select v-model="formBridge" data-testid="dedicated-interface" class="h-10 rounded-md border bg-background px-3"><option value="">使用 IP 池接口 / 自动选择</option><option v-for="iface in ifaceItems" :key="iface.name" :value="iface.name">{{ iface.name }}（{{ iface.kind }} · {{ (iface.ipv4 ?? []).join(', ') || '无 IPv4' }}）</option></select>
+                <p class="text-xs text-muted-foreground">物理上联使用 routed，不移动主机地址；bridge 仅连接已存在的 Linux 网桥。</p>
               </div>
             </div>
             <div v-if="formNetworkMode === 'dedicated'" class="grid gap-2">
-              <Label>从独立 IP 池选择</Label><Select v-model="formIPEntry"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="manual">手动填写网络参数</SelectItem><SelectItem v-for="entry in freeIPs" :key="entry.id" :value="String(entry.id)">{{ entry.cidr }} {{ entry.note }}</SelectItem></SelectContent></Select>
-              <p class="text-xs text-muted-foreground">选择地址后自动填写网关、DNS 和接口。提交时会检查地址是否仍可分配。</p>
+              <Label>独立 IP 接入方式</Label><select v-model="formDedicatedMode" data-testid="dedicated-mode" class="h-10 rounded-md border bg-background px-3"><option value="auto">自动（物理上联 routed / 已有网桥 bridge）</option><option value="routed">路由（routed）</option><option value="bridge">已有 Linux 网桥（bridge）</option></select>
+              <Label>独立 IP 分配</Label><Select v-model="formIPEntry"><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">每次创建自动分配空闲地址（默认）</SelectItem><SelectItem value="manual">手动填写网络参数（管理员）</SelectItem><SelectItem v-for="entry in freeIPs" :key="entry.id" :value="String(entry.id)">{{ entry.cidr }} {{ entry.note }}</SelectItem></SelectContent></Select>
+              <p class="text-xs text-muted-foreground">默认由主控在每次创建时原子分配，不复用固定地址；空闲列表仅作参考，池耗尽或并发占用会显示服务端错误。</p>
             </div>
             <div v-if="formNetworkMode === 'vpc'" class="grid gap-2">
               <Label>VPC 网络</Label><Select v-model="formVPC"><SelectTrigger><SelectValue placeholder="选择该节点的 VPC" /></SelectTrigger><SelectContent><SelectItem v-for="vpc in vpcs" :key="vpc.id" :value="String(vpc.id)">{{ vpc.name }} · {{ vpc.subnet }} · {{ vpc.driver }}</SelectItem></SelectContent></Select>
@@ -422,14 +468,15 @@ onMounted(async () => { await load(); await loadMeta() })
             </div>
             <div class="grid gap-3 sm:grid-cols-3">
               <div class="grid gap-2"><Label>MAC 地址</Label><Input v-model="formMAC" placeholder="52:54:00:xx:xx:xx" /></div>
-              <div class="grid gap-2"><Label>IPv4 / CIDR</Label><Input v-model="formIPv4" placeholder="192.168.1.20/24" /></div>
+              <div class="grid gap-2"><Label>IPv4 / CIDR</Label><Input v-model="formIPv4" :disabled="formNetworkMode === 'dedicated' && formIPEntry === 'auto'" :placeholder="formNetworkMode === 'dedicated' && formIPEntry === 'auto' ? '创建时由主控自动分配' : '192.168.1.20/24'" /></div>
               <div class="grid gap-2"><Label>网关</Label><Input v-model="formGateway" placeholder="192.168.1.1" /></div>
             </div>
             <div class="grid gap-3 sm:grid-cols-2"><div class="grid gap-2"><Label>DNS（逗号分隔）</Label><Input v-model="formDNS" placeholder="1.1.1.1,8.8.8.8" /></div><div class="grid gap-2"><Label>带宽限制 Mbps</Label><Input :modelValue="String(formBandwidth)" @update:modelValue="(v:any)=> formBandwidth=parseInt(v)||0" type="number" min="0" /></div></div>
           </div>
-        </div>
+        </fieldset>
+        <SecurityGroupSelect v-model="formSecurityGroups" :items="securityGroups" :disabled="creating || groupsLoading || !!groupsError" />
         <DialogFooter>
-          <Button variant="outline" @click="showCreate=false">取消</Button>
+          <Button variant="outline" :disabled="creating" @click="showCreate=false">取消</Button>
           <Button :disabled="creating || !formAgentId" @click="create">{{ creating ? '创建中...' : '创建' }}</Button>
         </DialogFooter>
       </DialogContent>

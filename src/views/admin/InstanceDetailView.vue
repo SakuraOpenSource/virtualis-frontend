@@ -3,12 +3,13 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { TabsRoot, TabsList, TabsTrigger, TabsContent } from 'reka-ui'
 import { useRoute, useRouter } from 'vue-router'
 import RFB from '@novnc/novnc'
-import { virtualisApi } from '@/lib/endpoints'
+import { agentApi, virtualisApi } from '@/lib/endpoints'
 import { errorMessage } from '@/lib/api'
 import { useToast } from '@/composables/useToast'
-import type { InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance, InstanceOperationLog, NetworkConfig } from '@/lib/types'
+import type { HostInterface, InstanceMetrics, NATMapping, NetworkStatus, VNCInfo, VirtualisImage, VirtualisInstance, InstanceOperationLog, NetworkConfig } from '@/lib/types'
 import PageHeader from '@/components/app/PageHeader.vue'
 import FirewallPanel from '@/components/app/FirewallPanel.vue'
+import SecurityGroupPanel from '@/components/app/SecurityGroupPanel.vue'
 import RecoveryPanel from '@/components/app/RecoveryPanel.vue'
 import MigrationDialog from '@/components/app/MigrationDialog.vue'
 import ResizeDialog from '@/components/app/ResizeDialog.vue'
@@ -63,6 +64,21 @@ const configureBusy = ref(false)
 const operationLogs = ref<InstanceOperationLog[]>([])
 const logsLoading = ref(false)
 const networkForm = ref<NetworkConfig>({ mode: 'nat' })
+const securityGroupRefresh = ref(0)
+const hostInterfaces = ref<HostInterface[]>([]), hostLoading = ref(false), hostError = ref('')
+let hostRequest = 0
+async function loadHostInterfaces() {
+  const current = ++hostRequest, agentID = inst.value?.agent_id
+  hostInterfaces.value = []; hostError.value = ''; hostLoading.value = false
+  if (!agentID || networkForm.value.mode !== 'dedicated') return
+  hostLoading.value = true
+  try {
+    const summary = await agentApi.hostNetwork(agentID)
+    if (current === hostRequest && !disposed) hostInterfaces.value = (summary.interfaces ?? []).filter(iface => ['bridge', 'physical', 'vlan'].includes(iface.kind) && iface.state?.toLowerCase() !== 'down')
+  } catch (e) { if (current === hostRequest && !disposed) hostError.value = errorMessage(e) }
+  finally { if (current === hostRequest) hostLoading.value = false }
+}
+watch(() => [inst.value?.agent_id, networkForm.value.mode], loadHostInterfaces)
 // 确认框状态：原生 confirm 已迁移到 ConfirmDialog。
 const confirmNatOpen = ref(false)
 const pendingNatId = ref<number | null>(null)
@@ -225,6 +241,7 @@ async function loadLogs() {
 }
 async function refreshAfterTask() {
   generation++
+  securityGroupRefresh.value++
   try {
     const updated = await virtualisApi.instance(id)
     if (disposed) return
@@ -241,6 +258,10 @@ function configureNetwork() {
 
 async function doConfigureNetwork() {
   if (busy.value) return
+  if (networkForm.value.mode === 'dedicated') {
+    if (hostLoading.value || hostError.value) { toast.error(hostError.value || '上联信息加载中，请稍候'); return }
+    if (networkForm.value.dedicated_mode === 'bridge' && !hostInterfaces.value.some(iface => iface.name === networkForm.value.bridge && iface.kind === 'bridge')) { toast.error('bridge 必须选择已存在的 Linux 网桥'); return }
+  }
   confirmNetworkOpen.value = false
   configureBusy.value = true
   try {
@@ -343,7 +364,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  disposed = true; generation++; logsRequest++
+  disposed = true; generation++; logsRequest++; hostRequest++
   if (telemetryTimer) clearInterval(telemetryTimer)
   if (logsTimer) clearInterval(logsTimer)
   disconnectVNC()
@@ -383,7 +404,7 @@ onBeforeUnmount(() => {
           <div><span class="text-muted-foreground">规格：</span>{{ cpuLabel(inst.spec.cpu, inst.spec.cpu_milli) }} / {{ inst.spec.memory_mb }}MB / {{ inst.spec.disk_gb }}GB</div>
           <div><span class="text-muted-foreground">镜像：</span>{{ inst.image?.name ?? inst.image_id ?? '-' }}</div>
           <div><span class="text-muted-foreground">网络：</span>{{ inst.network?.mode || 'nat' }}{{ inst.network?.bridge ? ` / ${inst.network.bridge}` : '' }}</div>
-          <div><span class="text-muted-foreground">配置 IPv4：</span>{{ inst.ip || inst.network?.ipv4 || '-' }}</div>
+          <div><span class="text-muted-foreground">配置 IPv4：</span>{{ inst.network?.ipv4 || inst.ip || '-' }}</div>
           <div><span class="text-muted-foreground">观测 IPv4：</span>{{ inst.observed_ip || '-' }}</div>
           <div><span class="text-muted-foreground">SSH：</span><Badge :variant="inst.ssh_ready ? 'default' : 'outline'">{{ inst.ssh_ready ? '已就绪' : '未确认' }}</Badge></div>
           <div v-if="inst.network_error" class="text-destructive sm:col-span-2 lg:col-span-3"><span class="text-muted-foreground">网络错误：</span>{{ inst.network_error }}</div>
@@ -447,6 +468,16 @@ onBeforeUnmount(() => {
       </Card>
         </TabsContent>
         <TabsContent value="network" class="space-y-6 tab-panel">
+      <Card v-if="networkForm.mode === 'dedicated'"><CardHeader><CardTitle>独立 IP 网络配置</CardTitle><CardDescription>保留分配时的 IPv4 / CIDR；routed 客户机运行时使用 /32 和链路本地网关，不回写期望配置。</CardDescription></CardHeader><CardContent class="space-y-4">
+        <ErrorAlert :message="hostError" /><p v-if="hostLoading" role="status" class="text-sm text-muted-foreground">加载上联信息中…</p>
+        <fieldset :disabled="busy || hostLoading" class="grid gap-3 sm:grid-cols-2">
+          <label class="space-y-1 text-sm">接入方式<select v-model="networkForm.dedicated_mode" data-testid="detail-dedicated-mode" class="block h-10 w-full rounded border bg-background px-3"><option :value="undefined">自动（兼容旧配置）</option><option value="auto">自动</option><option value="routed">路由（routed）</option><option value="bridge">已有 Linux 网桥（bridge）</option></select></label>
+          <label class="space-y-1 text-sm">挂载接口<select v-model="networkForm.bridge" data-testid="detail-dedicated-interface" class="block h-10 w-full rounded border bg-background px-3"><option value="">自动选择</option><option v-if="networkForm.bridge && !hostInterfaces.some(iface => iface.name === networkForm.bridge)" :value="networkForm.bridge">{{ networkForm.bridge }}（未确认）</option><option v-for="iface in hostInterfaces" :key="iface.name" :value="iface.name" :disabled="networkForm.dedicated_mode === 'bridge' && iface.kind !== 'bridge'">{{ iface.name }} · {{ iface.kind }}</option></select></label>
+          <label class="space-y-1 text-sm">期望 IPv4 / CIDR<Input v-model="networkForm.ipv4" data-testid="detail-desired-ipv4" /></label>
+          <label class="space-y-1 text-sm">期望网关<Input v-model="networkForm.gateway" /></label>
+          <label class="space-y-1 text-sm">DNS（逗号分隔）<Input :model-value="(networkForm.dns ?? []).join(',')" @update:model-value="value => networkForm.dns = String(value).split(',').map(value => value.trim()).filter(Boolean)" /></label>
+        </fieldset><Button variant="outline" size="sm" :disabled="busy || hostLoading" @click="loadHostInterfaces">刷新上联信息</Button><p class="text-xs text-muted-foreground">物理上联 routed 不移动宿主接口或主 IP；bridge 必须选择已有 Linux 网桥。通过下方“配置网络”确认应用。</p>
+      </CardContent></Card>
       <Card>
         <CardHeader>
           <CardTitle>SSH 访问</CardTitle>
@@ -545,6 +576,7 @@ onBeforeUnmount(() => {
             <div v-else class="text-sm text-muted-foreground">暂无网卡信息。</div>
           </CardContent>
         </Card>
+          <SecurityGroupPanel :instance-id="id" :refresh-key="securityGroupRefresh" :disabled="busy" @busy-change="taskBusy = $event" @settled="loadLogs" />
           <FirewallPanel :instance-id="id" :disabled="busy" @busy-change="taskBusy = $event" @settled="refreshAfterTask" />
         </TabsContent>
         <TabsContent value="recovery" force-mount v-show="activeTab === 'recovery'" class="space-y-6 tab-panel">

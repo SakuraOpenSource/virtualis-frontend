@@ -18,6 +18,7 @@ const nav = [
   { to: '/admin/images', label: '镜像', icon: HardDrive, name: 'images' },
   { to: '/admin/agents', label: '被控节点', icon: Network, name: 'agents' },
   { to: '/admin/networks', label: 'VPC 与 IP 池', icon: Network, name: 'networks' },
+  { to: '/admin/security-groups', label: '安全组', icon: KeyRound, name: 'security-groups' },
   { to: '/admin/settings', label: '设置', icon: Settings, name: 'settings' },
   { to: '/admin/api-keys', label: 'API 密钥', icon: KeyRound, name: 'api-keys' },
   { to: '/admin/account', label: '账号', icon: User, name: 'account' },
@@ -37,7 +38,7 @@ function isActive(name: string) {
       <nav class="flex-1 p-2 space-y-1 overflow-y-auto">
         <RouterLink v-for="item in nav" :key="item.to" :to="item.to" :class="['flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors', isActive(item.name) ? 'bg-sidebar-accent text-sidebar-accent-foreground' : 'hover:bg-sidebar-accent/50']">
           <component :is="item.icon" class="h-4 w-4 shrink-0" />
-          <span v-if="!collapsed">{{ item.label }}</span>
+          <span v-if="!collapsed">{{ item.name === 'security-groups' ? $t('nav.securityGroups') : item.label }}</span>
         </RouterLink>
       </nav>
       <div class="p-2 border-t border-sidebar-border flex items-center gap-1">
