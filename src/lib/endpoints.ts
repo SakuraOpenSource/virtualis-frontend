@@ -3,7 +3,7 @@ import type {
   Bootstrap, CaptchaChallenge, CaptchaSettings, SiteSettings, VirtualisSettings,
   Page, User, VirtualisInstance, VirtualisImage, VirtualisDriver, InstanceMetrics, NetworkStatus, VNCInfo, NetworkConfig,
   VirtualisAgent, AgentDownload, APIKeyList, APIKeyCreated, APIKeyInput, DatabaseConfig, InstallRequest,
-  HostNetworkSummary,
+  HostNetworkSummary, SecurityGroup, SecurityGroupInput, InstanceSecurityGroups,
   NATMapping,
   InstanceOperationLog
   , BatchAction, BatchResult, Snapshot, Backup, VPC, VPCInput, FirewallRule, FirewallInput, FreeIPEntry, IPPoolOverview, IPPoolInput, IPPoolEntry
@@ -80,7 +80,7 @@ export const virtualisApi = {
     const { data } = await http.get<VirtualisInstance>(`/instances/${id}`)
     return data
   },
-  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; cpu_milli?: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean; ip_pool_entry_id?: number; vpc_id?: number }) {
+  async createInstance(payload: { name: string; agent_id: number; driver?: string; type?: string; spec: { cpu: number; cpu_milli?: number; memory_mb: number; disk_gb: number; arch?: string }; network?: NetworkConfig; image_id?: number | null; max_nat_mappings?: number; auto_password?: boolean; ip_pool_entry_id?: number; vpc_id?: number; security_group_ids?: number[] }) {
     const { data } = await http.post<VirtualisInstance>('/instances', payload)
     return data
   },
@@ -217,6 +217,17 @@ export const networkApi = {
   async createFirewall(instanceID: number, payload: FirewallInput) { return (await http.post<FirewallRule>(`/instances/${instanceID}/firewall`, payload)).data },
   async updateFirewall(id: number, payload: FirewallInput) { return (await http.patch<FirewallRule>(`/firewall/${id}`, payload)).data },
   async deleteFirewall(id: number) { await http.delete(`/firewall/${id}`) },
+}
+
+export const securityGroupApi = {
+  async list() { return (await http.get<{ items: SecurityGroup[] | null }>('/admin/security-groups')).data.items ?? [] },
+  async get(id: number) { return (await http.get<SecurityGroup>(`/admin/security-groups/${id}`)).data },
+  async create(payload: SecurityGroupInput) { return (await http.post<SecurityGroup>('/admin/security-groups', payload)).data },
+  async update(id: number, payload: SecurityGroupInput) { return (await http.patch<SecurityGroup>(`/admin/security-groups/${id}`, payload)).data },
+  async remove(id: number) { await http.delete(`/admin/security-groups/${id}`) },
+  async rules(id: number, rules: FirewallInput[]) { return (await http.put<SecurityGroup>(`/admin/security-groups/${id}/rules`, { rules })).data },
+  async binding(instanceID: number) { return (await http.get<InstanceSecurityGroups>(`/instances/${instanceID}/security-groups`)).data },
+  async bind(instanceID: number, security_group_ids: number[]) { return (await http.put<InstanceSecurityGroups>(`/instances/${instanceID}/security-groups`, { security_group_ids })).data },
 }
 
 export const agentApi = {

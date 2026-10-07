@@ -115,6 +115,7 @@ export interface InstanceSpec {
 
 export interface NetworkConfig {
   mode: 'nat' | 'bridge' | 'none' | string
+  dedicated_mode?: 'auto' | 'routed' | 'bridge'
   bridge?: string
   mac?: string
   ipv4?: string
@@ -159,6 +160,9 @@ export interface VirtualisInstance {
 	 vpc_id?: number | null
 	 vpc?: VPC | null
 	 firewall_rules?: FirewallRule[]
+  security_group_ids?: number[]
+  security_groups?: SecurityGroup[]
+  firewall_policy?: FirewallPolicy | null
   ssh_password?: string
   ip?: string
   observed_ip?: string
@@ -250,6 +254,20 @@ export interface FirewallInput {
   cidr: string; priority: number; enabled: boolean; remark: string
 }
 export interface FirewallRule extends FirewallInput { id: number; instance_id: number; agent_id: number }
+export interface FirewallPolicy { ingress: 'accept' | 'drop'; egress: 'accept' | 'drop' }
+export interface SecurityGroupInput {
+  name: string
+  description: string
+  ingress_policy: FirewallPolicy['ingress']
+  egress_policy: FirewallPolicy['egress']
+}
+export interface SecurityGroup extends SecurityGroupInput { id: number; rules: FirewallInput[] }
+export interface InstanceSecurityGroups {
+  security_group_ids: number[]
+  groups: SecurityGroup[]
+  effective_rules: FirewallInput[]
+  firewall_policy: FirewallPolicy | null
+}
 export interface FreeIPEntry { id: number; ip: string; cidr: string; gateway: string; dns: string[]; interface: string; note: string }
 export interface IPPoolEntry { id: number; ip: string; gateway: string; prefix: number; status: string; note: string; instance_id?: number | null; instance_name?: string }
 export interface IPPoolInput { gateway: string; prefix: number; dns: string[]; interface: string; note: string }
@@ -265,7 +283,7 @@ export interface HostInterface {
   ipv6?: string[]
 }
 
-/** 被控主机网络汇总。ipv4_count >= 2 时独立 IP 模式可用。 */
+/** 被控主机网络汇总；独立 IP 就绪状态依赖可用接口与空闲 IP 池，不依赖主机地址数量。 */
 export interface HostNetworkSummary {
   interfaces: HostInterface[]
   ipv4_count: number
