@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, reactive } from 'vue'
 
 export const instance = {
   id: 4, name: 'sample', agent_id: 1, driver: 'qemu', type: 'vm', status: 'stopped',
@@ -13,8 +13,15 @@ export const globals = {
   mocks: { $t: (v: string) => v },
   stubs: { RouterLink: slot },
 }
+// The mocked route object is reactive so tests can flip route.params.id and
+// exercise the detail -> detail remount path (component instance reuse).
+const routeState = reactive({ params: { id: '4' } as Record<string, string>, query: {}, path: '/admin/instances/4' })
 export function mockRoute() {
-  return { useRoute: () => ({ params: { id: '4' }, query: {}, path: '/admin/instances/4' }), useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), RouterLink: slot }
+  return { useRoute: () => routeState, useRouter: () => ({ push: vi.fn(), replace: vi.fn() }), RouterLink: slot }
+}
+export function setRouteId(id: string) {
+  routeState.params.id = id
+  routeState.path = `/admin/instances/${id}`
 }
 export function deferred<T>() {
   let resolve!: (v: T) => void

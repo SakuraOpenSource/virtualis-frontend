@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { http } from '@/lib/api'
 import { instance, globals, mockRoute } from './helpers'
 import InstanceDetailView from '@/views/admin/InstanceDetailView.vue'
@@ -156,6 +157,94 @@ describe('instance detail layout', () => {
     panel.vm.$emit('busy-change', '')
     finish(instance)
     await flushPromises()
+    wrapper.unmount()
+  })
+
+  it('requires an explicit confirmation before the destructive reinstall request', async () => {
+    const requests: any[] = []
+    http.defaults.adapter = async config => {
+      requests.push(config)
+      // Include an image list so the reinstall select has an option to pick,
+      // and answer the power call with a full instance shape.
+      const data = config.method === 'post' && config.url === '/instances/4/power' ? instance
+        : config.url === '/instances/4' ? instance
+        : config.url === '/images' ? { items: [{ id: 2, name: 'debian-12', driver: 'qemu' }] }
+        : { items: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    const wrapper = mount(InstanceDetailView, { global: { ...globals, stubs: { DialogContent: { template: '<div><slot /></div>' } } } })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    vm.reinstallImage = '2'
+    await nextTick()
+    await wrapper.findAll('button').find(b => b.text() === '重装')!.trigger('click')
+    await flushPromises()
+    // The click must only open the confirmation dialog, not hit the API yet.
+    expect(requests.some(r => r.method === 'post' && r.url === '/instances/4/power')).toBe(false)
+    expect(vm.confirmReinstallOpen).toBe(true)
+    const dialog = wrapper.findAllComponents({ name: 'ConfirmDialog' }).at(-1)!
+    expect(dialog.props('title')).toBe('confirm.reinstallTitle')
+    // The $t mock echoes keys; assert the dialog is wired to the reinstall
+    // keys whose zh-CN copy spells out the unrecoverable disk wipe.
+    expect(dialog.props('description')).toBe('confirm.reinstallDesc')
+    await dialog.findAll('button').find(b => b.text() === 'common.confirm')!.trigger('click')
+    await flushPromises()
+    expect(vm.confirmReinstallOpen).toBe(false)
+    const reinstall = requests.find(r => r.method === 'post' && r.url === '/instances/4/power')
+    expect(JSON.parse(reinstall.data)).toEqual({ action: 'reinstall', image_id: 2 })
+    wrapper.unmount()
+  })
+
+  it('reloads the instance when the route id changes instead of keeping the old record', async () => {
+    const { setRouteId } = await import('./helpers')
+    const requests: any[] = []
+    const other = { ...instance, id: 7, name: 'other-instance' }
+    http.defaults.adapter = async config => {
+      requests.push(config)
+      const data = config.url === '/instances/7' ? other : config.url === '/instances/4' ? instance : { items: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    const wrapper = mount(InstanceDetailView, { global: globals })
+    await flushPromises()
+    expect(wrapper.text()).toContain('sample')
+    // Detail -> detail navigation reuses this component instance; the view
+    // must switch to the new record rather than showing stale data.
+    setRouteId('7')
+    await flushPromises()
+    expect(requests.some(r => r.url === '/instances/7')).toBe(true)
+    expect((wrapper.vm as any).inst.name).toBe('other-instance')
+    expect(wrapper.text()).toContain('other-instance')
+    wrapper.unmount()
+    setRouteId('4')
+  })
+
+  it('unlocks after a successful power response even when no busy token is present (VIR-CORE-05)', async () => {
+    const requests: any[] = []
+    http.defaults.adapter = async config => {
+      requests.push(config)
+      // New backend contract: success response omits busy_* entirely.
+      const data = config.method === 'post' && config.url === '/instances/4/power' ? { ...instance, status: 'running' } : config.url === '/instances/4' ? instance : { items: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    const wrapper = mount(InstanceDetailView, { global: globals })
+    await flushPromises()
+    const vm = wrapper.vm as any
+    await vm.power('start')
+    await flushPromises()
+    expect(requests.some(r => r.method === 'post' && r.url === '/instances/4/power')).toBe(true)
+    expect(vm.inst.busy_operation).toBeUndefined()
+    expect(wrapper.find('[data-testid="operation-busy"]').exists()).toBe(false)
+
+    // Legacy shape: success payload still embeds the already-released token;
+    // the UI must not stay busy on it either.
+    http.defaults.adapter = async config => {
+      const data = config.method === 'post' && config.url === '/instances/4/power' ? { ...instance, status: 'stopped', busy_operation: 'op-done', busy_action: 'stop' } : config.url === '/instances/4' ? instance : { items: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    await vm.power('stop')
+    await flushPromises()
+    expect(vm.inst.busy_operation).toBeUndefined()
+    expect(wrapper.find('[data-testid="operation-busy"]').exists()).toBe(false)
     wrapper.unmount()
   })
 })

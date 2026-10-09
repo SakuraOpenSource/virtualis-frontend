@@ -29,6 +29,8 @@ export default {
     configureNetworkDesc: '将重新配置实例网络，并重新初始化 SSH/NAT。运行中的实例可能会重启，继续吗？',
     deleteInstanceTitle: '移入回收站',
     deleteInstanceDesc: '实例将关机并移入回收站，保留 IP、端口与恢复点；可在保留期限内恢复。确认继续？',
+    reinstallTitle: '重装实例',
+    reinstallDesc: '重装将清空系统盘并按所选镜像重新部署，磁盘上的全部数据不可恢复（仅流量统计保留），SSH 密码会重新生成。请先创建备份。确认继续？',
     deleteImageTitle: '删除镜像',
     deleteImageDesc: '确认删除该镜像？被实例引用时无法删除。',
     deleteAgentTitle: '删除被控节点',

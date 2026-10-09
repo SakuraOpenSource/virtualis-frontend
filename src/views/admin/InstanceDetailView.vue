@@ -27,7 +27,10 @@ import { cpuLabel, formatBytes, formatDateTime } from '@/lib/utils'
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
-const id = Number(route.params.id)
+// The route param must stay reactive: navigating detail -> detail reuses this
+// component instance (same route record), so a one-time constant would keep
+// showing the previous instance.
+const id = computed(() => Number(route.params.id))
 const activeTab = ref('overview')
 const inst = ref<VirtualisInstance | null>(null)
 const loading = ref(false)
@@ -54,7 +57,7 @@ let rfb: RFB | null = null
 let telemetryTimer: ReturnType<typeof setInterval> | undefined
 let logsTimer: ReturnType<typeof setInterval> | undefined
 
-// NAT 映射与 SSH 密码管理。
+// NAT mappings and SSH password management.
 const natMappings = ref<NATMapping[]>([])
 const natForm = ref({ protocol: 'tcp', guest_port: '', host_port: '', remark: '' })
 const natBusy = ref(false)
@@ -79,12 +82,15 @@ async function loadHostInterfaces() {
   finally { if (current === hostRequest) hostLoading.value = false }
 }
 watch(() => [inst.value?.agent_id, networkForm.value.mode], loadHostInterfaces)
-// 确认框状态：原生 confirm 已迁移到 ConfirmDialog。
+// Confirm dialogs: native confirm() has been migrated to ConfirmDialog.
 const confirmNatOpen = ref(false)
 const pendingNatId = ref<number | null>(null)
 const confirmPasswordOpen = ref(false)
 const confirmNetworkOpen = ref(false)
 const confirmDeleteOpen = ref(false)
+// Reinstall wipes the disk (Delete+Create on the agent); same two-step
+// confirmation pattern as the other destructive actions.
+const confirmReinstallOpen = ref(false)
 let generation = 0, logsRequest = 0, disposed = false
 watch(busy, () => { generation++ }, { flush: 'sync' })
 watch(() => inst.value?.agent_id, () => { generation++; network.value = null; metrics.value = null }, { flush: 'sync' })
@@ -96,11 +102,11 @@ const sshCommand = computed(() => sshMapping.value && sshHost.value ? `ssh root@
 async function loadNAT() {
   const current = generation
   try {
-    const fresh = await virtualisApi.instance(id)
+    const fresh = await virtualisApi.instance(id.value)
     if (current !== generation || disposed) return
     inst.value = fresh
     natMappings.value = fresh.nat_mappings ?? []
-  } catch { /* 详情加载失败时主流程已有错误提示 */ }
+  } catch { /* detail load failure is already surfaced by the main flow */ }
 }
 
 async function addNAT() {
@@ -109,7 +115,7 @@ async function addNAT() {
   if (!guestPort || guestPort < 1 || guestPort > 65535) { toast.error('请填写实例端口（1-65535）'); return }
   natBusy.value = true
   try {
-    await virtualisApi.createNATMapping(id, {
+    await virtualisApi.createNATMapping(id.value, {
       protocol: natForm.value.protocol,
       guest_port: guestPort,
       host_port: parseInt(natForm.value.host_port) || 0,
@@ -133,7 +139,7 @@ async function doRemoveNAT() {
   confirmNatOpen.value = false
   natBusy.value = true
   try {
-    await virtualisApi.deleteNATMapping(id, pendingNatId.value)
+    await virtualisApi.deleteNATMapping(id.value, pendingNatId.value)
     toast.success('映射已删除')
     await loadNAT()
   } catch (e) { toast.error(errorMessage(e)) } finally { natBusy.value = false }
@@ -149,7 +155,7 @@ async function doRotatePassword() {
   const password = generatePassword()
   passwordBusy.value = true
   try {
-    const updated = await virtualisApi.setPassword(id, password)
+    const updated = await virtualisApi.setPassword(id.value, password)
     inst.value = updated
     natMappings.value = updated.nat_mappings ?? natMappings.value
     showPassword.value = true
@@ -170,7 +176,7 @@ const memoryPercent = computed(() => {
   return Math.min(100, Math.max(0, metrics.value.memory_used_mb / metrics.value.memory_total_mb * 100))
 })
 
-/** 流量进度：不限流量时 quota 为空；上限 102400GB 与后端 NetworkConfig 校验一致。 */
+/** Traffic progress: an absent quota means unlimited; the 102400GB ceiling matches the backend NetworkConfig validation. */
 const trafficProgress = computed(() => {
   const quotaGB = inst.value?.network?.traffic_gb ?? 0
   const used = metrics.value?.traffic_used_bytes
@@ -193,7 +199,7 @@ function formatRate(value: number) {
 async function load() {
   loading.value=true
   error.value=''
-  try { inst.value = await virtualisApi.instance(id); if (inst.value.network) networkForm.value = { ...inst.value.network } } catch (e) { error.value=errorMessage(e) } finally { loading.value=false }
+  try { inst.value = await virtualisApi.instance(id.value); if (inst.value.network) networkForm.value = { ...inst.value.network } } catch (e) { error.value=errorMessage(e) } finally { loading.value=false }
 }
 
 async function loadImages() {
@@ -204,7 +210,7 @@ async function refreshTelemetry(showToast = false) {
   if (!inst.value || busy.value || telemetryLoading.value) return
   const current = generation
   telemetryLoading.value = true
-  const results = await Promise.allSettled([virtualisApi.metrics(id), virtualisApi.network(id)])
+  const results = await Promise.allSettled([virtualisApi.metrics(id.value), virtualisApi.network(id.value)])
   telemetryLoading.value = false
   if (current !== generation || disposed) return
   if (results[0].status === 'fulfilled') metrics.value = results[0].value
@@ -218,7 +224,7 @@ async function checkNetwork() {
   const current = generation
   networkLoading.value = true
   try {
-    const result = await virtualisApi.network(id)
+    const result = await virtualisApi.network(id.value)
     if (current !== generation || disposed) return
     network.value = result
     const observed = network.value.interfaces?.flatMap((item) => item.ipv4 ?? []).find((item) => item && item !== '127.0.0.1')
@@ -234,7 +240,7 @@ async function loadLogs() {
   const current = ++logsRequest
   logsLoading.value = true
   try {
-    const page = await virtualisApi.operationLogs(id, { page: 1, page_size: 50 })
+    const page = await virtualisApi.operationLogs(id.value, { page: 1, page_size: 50 })
     if (current !== logsRequest || disposed) return
     operationLogs.value = page.items ?? []
   } catch (e) { if (current === logsRequest && !disposed) toast.error(errorMessage(e)) } finally { if (current === logsRequest) logsLoading.value = false }
@@ -243,7 +249,7 @@ async function refreshAfterTask() {
   generation++
   securityGroupRefresh.value++
   try {
-    const updated = await virtualisApi.instance(id)
+    const updated = await virtualisApi.instance(id.value)
     if (disposed) return
     inst.value = updated
     natMappings.value = updated.nat_mappings ?? []
@@ -265,7 +271,7 @@ async function doConfigureNetwork() {
   confirmNetworkOpen.value = false
   configureBusy.value = true
   try {
-    const result = await virtualisApi.configureNetwork(id, networkForm.value)
+    const result = await virtualisApi.configureNetwork(id.value, networkForm.value)
     inst.value = result.instance
     natMappings.value = result.instance.nat_mappings ?? natMappings.value
     await Promise.all([refreshTelemetry(), loadLogs()])
@@ -279,7 +285,7 @@ async function doConfigureNetwork() {
 async function loadVNC() {
   vncLoading.value = true
   try {
-    vnc.value = await virtualisApi.vnc(id)
+    vnc.value = await virtualisApi.vnc(id.value)
     if (!vnc.value.available) {
       toast.error(vnc.value.message || '当前实例没有 VNC')
       return
@@ -289,9 +295,10 @@ async function loadVNC() {
     consoleOpen.value = true
     await nextTick()
     if (!vncTarget.value) return
-    const webURL = vnc.value.web_url || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/instances/${id}/vnc/ws`
-    // resizeSession 必须关：QEMU 对 VGA 的 SetDesktopSize 请求会回
-    // "Invalid screen layout"，随后画面不再渲染，看起来像连不上。
+    const webURL = vnc.value.web_url || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/instances/${id.value}/vnc/ws`
+    // resizeSession must stay off: QEMU answers VGA SetDesktopSize requests
+    // with "Invalid screen layout" and then stops rendering, which looks
+    // like a connection failure.
     rfb = new RFB(vncTarget.value, webURL)
     rfb.scaleViewport = true
     rfb.resizeSession = false
@@ -300,8 +307,9 @@ async function loadVNC() {
     rfb.addEventListener('disconnect', (e) => {
       vncConnected.value = false
       const detail = (e as CustomEvent).detail || {}
-      // 断开原因打进 console：clean=false 且秒断通常是浏览器刷新/手动重连，
-      // 握手阶段异常则要看这里和主控、被控两侧的 journal 对照。
+      // Log the disconnect reason to console: clean=false within seconds is
+      // usually a browser refresh/manual reconnect; handshake-phase errors
+      // need cross-checking here against the master/agent journals.
       console.warn('[VNC] 断开', detail)
       toast.error(detail.clean ? 'VNC 连接已断开' : 'VNC 异常断开，请点击「重连 VNC」重试')
     })
@@ -314,9 +322,9 @@ function disconnectVNC() {
   consoleOpen.value = false
 }
 
-/** 全屏控制台：新窗口里独立连接（内嵌窗口保留）。 */
+/** Fullscreen console: opens an independent window connection (embedded one is kept). */
 function openConsoleWindow() {
-  window.open(`/admin/instances/${id}/console`, '_blank', 'width=1280,height=820')
+  window.open(`/admin/instances/${id.value}/console`, '_blank', 'width=1280,height=820')
 }
 
 async function copy(value: string) {
@@ -328,18 +336,45 @@ async function power(action: string) {
   actionLoading.value=action
   try {
     const imgId = action==='reinstall' && reinstallImage.value ? parseInt(reinstallImage.value) : undefined
-    const updated = await virtualisApi.power(id, action, imgId as any)
-    inst.value = updated
+    const updated = await virtualisApi.power(id.value, action, imgId as any)
+    // VIR-CORE-05 guard: a success response may no longer carry the released
+    // busy token, and legacy responses carry an already-released one. In both
+    // cases the server-side fence is gone, so treat the operation as settled
+    // here rather than trusting a stale token embedded in this payload.
+    inst.value = normalizeSettled(updated)
     toast.success(`执行 ${action} 成功`)
     await refreshTelemetry()
-  } catch (e) { toast.error(errorMessage(e)) } finally { actionLoading.value='' }
+  } catch (e) {
+    toast.error(errorMessage(e))
+    // On failure the persisted fence may have been retained server-side;
+    // re-read the authoritative detail instead of assuming it was released.
+    if (action !== 'status') await load()
+  } finally { actionLoading.value='' }
+}
+
+/**
+ * VIR-CORE-05: successful power/restore responses used to embed the busy
+ * token captured before the deferred SQL release, leaving the UI stuck on a
+ * phantom busy state. The backend now omits the token on success; to stay
+ * compatible with both shapes we do not depend on the token field being
+ * present — a success response means the fence is released, so any busy_*
+ * fields carried by the payload are cleared here.
+ */
+function normalizeSettled(instance: VirtualisInstance): VirtualisInstance {
+  return instance.busy_operation ? { ...instance, busy_operation: undefined, busy_action: undefined, busy_since: undefined } : instance
+}
+
+/** Task dialogs (recovery/resize/migration) hand back the instance too; run
+ *  them through the same settled-state normalization as power responses. */
+function applyUpdated(next: VirtualisInstance) {
+  inst.value = normalizeSettled(next)
 }
 
 async function refreshStatus() {
   if (busy.value) return
   actionLoading.value='status'
   try {
-    inst.value = await virtualisApi.status(id)
+    inst.value = await virtualisApi.status(id.value)
     await refreshTelemetry()
     toast.success('状态已刷新')
   } catch (e) { toast.error(errorMessage(e)) } finally { actionLoading.value='' }
@@ -352,8 +387,45 @@ function del() {
 async function doDelete() {
   if (busy.value) return
   confirmDeleteOpen.value = false
-  try { await virtualisApi.deleteInstance(id); toast.success('已删除'); router.push({ name: 'instances' }) } catch (e) { toast.error(errorMessage(e)) }
+  try { await virtualisApi.deleteInstance(id.value); toast.success('已删除'); router.push({ name: 'instances' }) } catch (e) { toast.error(errorMessage(e)) }
 }
+
+// F3: reinstall destroys the disk (agent-side Delete + Create); route it
+// through the same two-step ConfirmDialog as delete/migrate/restore instead
+// of firing directly from the button.
+function reinstall() {
+  if (!reinstallImage.value) return
+  confirmReinstallOpen.value = true
+}
+
+async function doReinstall() {
+  confirmReinstallOpen.value = false
+  await power('reinstall')
+}
+
+// F4: detail -> detail navigation reuses this component instance (same route
+// record), so reset every per-instance state and reload when the id changes.
+watch(() => route.params.id, async (next, prev) => {
+  const nextId = Number(next)
+  if (!Number.isFinite(nextId) || nextId === Number(prev)) return
+  generation++
+  disconnectVNC()
+  // Do not null out inst here: load() flips loading=true which swaps the
+  // detail area to LoadingBlock immediately, while the dialogs mounted via
+  // v-if="inst" would otherwise re-render against a cleared record.
+  metrics.value = null
+  network.value = null
+  vnc.value = null
+  natMappings.value = []
+  operationLogs.value = []
+  networkForm.value = { mode: 'nat' }
+  activeTab.value = 'overview'
+  securityGroupRefresh.value++
+  error.value = ''
+  await load()
+  await Promise.all([loadImages(), refreshTelemetry(), loadLogs()])
+  await loadNAT()
+})
 
 onMounted(async () => {
   await load()
@@ -462,7 +534,7 @@ onBeforeUnmount(() => {
         <CardHeader><CardTitle>电源操作</CardTitle></CardHeader>
         <CardContent class="space-y-4">
           <div class="space-y-2"><Label>选择操作</Label><div class="flex flex-wrap gap-2"><Select :modelValue="''" :disabled="busy" @update:modelValue="(v:any)=> { if(v) power(v) }"><SelectTrigger class="w-64"><SelectValue placeholder="选择电源操作" /></SelectTrigger><SelectContent><SelectItem value="start" :disabled="inst.status==='running'">开机{{ inst.status==='running' ? '（已运行）' : '' }}</SelectItem><SelectItem value="stop" :disabled="inst.status!=='running'">关机{{ inst.status!=='running' ? '（未运行）' : '' }}</SelectItem><SelectItem value="restart" :disabled="inst.status!=='running'">重启</SelectItem><SelectItem value="hard_start" :disabled="inst.status==='running'">强制开机</SelectItem><SelectItem value="hard_stop" :disabled="inst.status!=='running'">强制关机</SelectItem><SelectItem value="hard_restart" :disabled="inst.status!=='running'">强制重启</SelectItem></SelectContent></Select><Button size="sm" variant="outline" :disabled="busy" @click="refreshStatus">刷新状态</Button></div><p class="text-xs text-muted-foreground">不可用选项为灰色且无法选择。</p></div>
-          <div class="flex flex-wrap items-end gap-2"><div class="grid gap-1"><Label>重装镜像</Label><Select :modelValue="reinstallImage" @update:modelValue="(v:any)=> reinstallImage=v"><SelectTrigger class="w-64"><SelectValue placeholder="选择镜像" /></SelectTrigger><SelectContent><SelectItem v-for="img in images" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }}）</SelectItem></SelectContent></Select></div><Button variant="destructive" size="sm" :disabled="busy || !reinstallImage" @click="power('reinstall')">重装</Button></div>
+          <div class="flex flex-wrap items-end gap-2"><div class="grid gap-1"><Label>重装镜像</Label><Select :modelValue="reinstallImage" @update:modelValue="(v:any)=> reinstallImage=v"><SelectTrigger class="w-64"><SelectValue placeholder="选择镜像" /></SelectTrigger><SelectContent><SelectItem v-for="img in images" :key="String(img.id)" :value="String(img.id)">{{ img.name }}（{{ img.driver }}）</SelectItem></SelectContent></Select></div><Button variant="destructive" size="sm" :disabled="busy || !reinstallImage" @click="reinstall">重装</Button></div>
           <div class="border-t pt-2"><Button variant="destructive" size="sm" :disabled="busy" @click="del">移入回收站</Button></div>
         </CardContent>
       </Card>
@@ -580,7 +652,7 @@ onBeforeUnmount(() => {
           <FirewallPanel :instance-id="id" :disabled="busy" @busy-change="taskBusy = $event" @settled="refreshAfterTask" />
         </TabsContent>
         <TabsContent value="recovery" force-mount v-show="activeTab === 'recovery'" class="space-y-6 tab-panel">
-          <RecoveryPanel :instance="inst" :disabled="!!taskBusy || !!actionLoading || configureBusy || passwordBusy || natBusy" @busy-change="recoveryBusy = $event" @updated="inst = $event" @settled="refreshAfterTask" />
+          <RecoveryPanel :instance="inst" :disabled="!!taskBusy || !!actionLoading || configureBusy || passwordBusy || natBusy" @busy-change="recoveryBusy = $event" @updated="applyUpdated" @settled="refreshAfterTask" />
         </TabsContent>
         <TabsContent value="logs" class="space-y-6 tab-panel">
       <Card>
@@ -596,11 +668,13 @@ onBeforeUnmount(() => {
         </TabsContent>
       </TabsRoot>
     </div>
-    <ResizeDialog v-if="inst" :open="resizeOpen" :instance="inst" :disabled="busy" @update:open="resizeOpen = $event" @busy-change="taskBusy = $event" @updated="inst = $event" @settled="refreshAfterTask" />
-    <MigrationDialog v-if="inst" :open="migrationOpen" :instance="inst" :disabled="busy" @update:open="migrationOpen = $event" @busy-change="taskBusy = $event" @updated="inst = $event" @settled="refreshAfterTask" />
+    <ResizeDialog v-if="inst" :open="resizeOpen" :instance="inst" :disabled="busy" @update:open="resizeOpen = $event" @busy-change="taskBusy = $event" @updated="applyUpdated" @settled="refreshAfterTask" />
+    <MigrationDialog v-if="inst" :open="migrationOpen" :instance="inst" :disabled="busy" @update:open="migrationOpen = $event" @busy-change="taskBusy = $event" @updated="applyUpdated" @settled="refreshAfterTask" />
     <ConfirmDialog :open="confirmNatOpen" @update:open="(v:boolean)=> confirmNatOpen=v" :title="$t('confirm.deleteNatTitle')" :description="$t('confirm.deleteNatDesc')" danger @confirm="doRemoveNAT" />
     <ConfirmDialog :open="confirmPasswordOpen" @update:open="(v:boolean)=> confirmPasswordOpen=v" :title="$t('confirm.rotatePasswordTitle')" :description="$t('confirm.rotatePasswordDesc')" danger @confirm="doRotatePassword" />
     <ConfirmDialog :open="confirmNetworkOpen" @update:open="(v:boolean)=> confirmNetworkOpen=v" :title="$t('confirm.configureNetworkTitle')" :description="$t('confirm.configureNetworkDesc')" danger @confirm="doConfigureNetwork" />
     <ConfirmDialog :open="confirmDeleteOpen" @update:open="(v:boolean)=> confirmDeleteOpen=v" :title="$t('confirm.deleteInstanceTitle')" :description="$t('confirm.deleteInstanceDesc')" danger @confirm="doDelete" />
+    <!-- Destructive reinstall: text spells out that the disk is wiped and cannot be recovered. -->
+    <ConfirmDialog :open="confirmReinstallOpen" @update:open="(v:boolean)=> confirmReinstallOpen=v" :title="$t('confirm.reinstallTitle')" :description="$t('confirm.reinstallDesc')" danger @confirm="doReinstall" />
   </div>
 </template>
