@@ -106,19 +106,19 @@
   body { @apply bg-background text-foreground antialiased; }
 }
 
-/* ---------- 全局微动效（150–250ms ease-out，尊重系统减动效） ---------- */
+/* ---------- Global micro-motion (150-250ms ease-out; honors system reduced motion) ---------- */
 
 @keyframes route-fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-/* 路由页进入淡入：作用于主内容区的直接子容器。 */
+/* Route enter fade: applies to direct children of the main content area. */
 main > * {
   animation: route-fade-in 200ms ease-out both;
 }
 
-/* 列表行 hover 反馈。 */
+/* Table row hover feedback. */
 table tbody tr {
   transition: background-color 150ms ease-out;
 }
@@ -126,14 +126,14 @@ table tbody tr:hover {
   background-color: color-mix(in oklab, var(--muted) 55%, transparent);
 }
 
-/* 按钮按下反馈。 */
+/* Button press feedback. */
 button:not(:disabled):active,
 [class*='btn']:not(:disabled):active {
   transition: transform 120ms ease-out;
   transform: scale(0.97);
 }
 
-/* 骨架屏淡入。 */
+/* Skeleton soft fade-in. */
 @keyframes soft-fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
@@ -143,7 +143,13 @@ button:not(:disabled):active,
   animation: soft-fade-in 200ms ease-out both;
 }
 
-/* ---------- 实例详情标签页（reka-ui Tabs 无样式原语的视觉层） ---------- */
+/* Keyboard access: a skip link that stays off-screen until focused, plus
+   visible focus rings that do not depend on hover or animation. */
+.skip-link { position: fixed; top: 0.5rem; left: 0.5rem; z-index: 200; padding: 0.75rem 1rem; background: var(--background); color: var(--foreground); border: 2px solid var(--ring); border-radius: var(--radius); transform: translateY(-200%); }
+.skip-link:focus { transform: none; }
+select:focus-visible, input[type='checkbox']:focus-visible, a:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+/* ---------- Instance detail tabs (visual layer over unstyled reka-ui Tabs primitives) ---------- */
 
 .detail-tabs {
   display: inline-flex;
@@ -191,14 +197,17 @@ button:not(:disabled):active,
   background: var(--accent);
 }
 
-/* 标签面板与标签栏留出间距（reka-ui TabsContent 本身无样式）。 */
+/* Tab panels and tab bar spacing (reka-ui TabsContent itself is unstyled). */
 .tab-panel {
   display: block;
   margin-top: 0.25rem;
 }
 
-/* 系统开启“减弱动态效果”时全部关闭。 */
+/* When the system enables "reduce motion", turn off everything — including
+   third-party dialogs, spinner icons and pseudo-elements; state is always
+   conveyed by readable text as well. */
 @media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
   main > *,
   [class*='animate-pulse'],
   [class*='Skeleton'] {

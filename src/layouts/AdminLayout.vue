@@ -30,6 +30,8 @@ function isActive(name: string) {
 </script>
 <template>
   <div class="min-h-screen flex">
+    <!-- Keyboard users land here first; hidden until focused (see .skip-link in style.css). -->
+    <a href="#main-content" class="skip-link">跳至主要内容</a>
     <aside :class="['border-r bg-sidebar text-sidebar-foreground flex flex-col transition-all', collapsed ? 'w-14' : 'w-56']">
       <div class="h-14 flex items-center gap-2 px-3 border-b border-sidebar-border shrink-0">
         <div class="h-7 w-7 rounded bg-sidebar-primary text-sidebar-primary-foreground flex items-center justify-center text-xs font-bold">V</div>
@@ -55,7 +57,8 @@ function isActive(name: string) {
         <div class="text-sm text-muted-foreground">Virtualis 控制台</div>
         <UserMenu />
       </header>
-      <main class="flex-1 bg-muted/20 p-6 overflow-y-auto"><RouterView /></main>
+      <!-- tabindex=-1 lets the skip link move focus into the main region programmatically. -->
+      <main id="main-content" tabindex="-1" class="flex-1 bg-muted/20 p-6 overflow-y-auto focus:outline-none"><RouterView /></main>
     </div>
   </div>
 </template>
