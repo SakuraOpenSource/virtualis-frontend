@@ -10,14 +10,28 @@ const global = { ...globals, stubs: { DialogContent: slot } }
 
 describe('recovery safety', () => {
   it('shows source metadata and prevents restoring incompatible or fenced recovery records', async () => {
-    http.defaults.adapter = async config => ({ data: { items: config.url?.endsWith('snapshots') ? [{ id: 8, agent_id: 9, name: 'old-node', size_bytes: 0, status: 'ready', error: 'source missing' }] : [{ id: 10, agent_id: 1, driver: 'incus', name: 'different-driver', size_bytes: 20, status: 'ready', checksum: 'abc123' }] }, status: 200, statusText: 'OK', headers: {}, config })
+    // Master persists recovery points as `available` (not the legacy `ready`);
+    // the panel must render real backend state without a frontend-only alias.
+    http.defaults.adapter = async config => ({ data: { items: config.url?.endsWith('snapshots') ? [{ id: 8, agent_id: 9, name: 'old-node', size_bytes: 0, status: 'available', error: 'source missing' }] : [{ id: 10, agent_id: 1, driver: 'incus', name: 'different-driver', size_bytes: 20, status: 'available', checksum: 'abc123' }] }, status: 200, statusText: 'OK', headers: {}, config })
     const wrapper = mount(RecoveryPanel, { props: { instance }, global }); await flushPromises()
     expect(wrapper.text()).toContain('节点 #9')
     expect(wrapper.text()).toContain('incus')
     expect(wrapper.text()).toContain('source missing')
+    expect(wrapper.text()).toContain('available')
     expect(wrapper.findAll('button').filter(b => b.text() === '恢复').every(b => b.attributes('disabled') !== undefined)).toBe(true)
     await wrapper.setProps({ instance: { ...instance, busy_operation: 'fence-1', busy_action: 'restore' } })
     expect(wrapper.find('[data-testid="snapshot-name"]').attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
+
+  it('keeps restore and backup download usable for the Master `available` status and the legacy `ready` alias', async () => {
+    http.defaults.adapter = async config => ({ data: { items: config.url?.endsWith('snapshots') ? [{ id: 8, agent_id: 1, name: 'fresh-snap', size_bytes: 10, status: 'available' }] : [{ id: 11, agent_id: 1, driver: 'qemu', name: 'fresh-backup', size_bytes: 20, status: 'ready', checksum: 'aa' }] }, status: 200, statusText: 'OK', headers: {}, config })
+    const wrapper = mount(RecoveryPanel, { props: { instance }, global }); await flushPromises()
+    // instance fixture is stopped and same agent/driver, so both rows must be actionable
+    const restoreButtons = wrapper.findAll('button').filter(b => b.text() === '恢复')
+    expect(restoreButtons).toHaveLength(2)
+    expect(restoreButtons.every(b => b.attributes('disabled') === undefined)).toBe(true)
+    expect(wrapper.findAll('button').find(b => b.text() === '下载')?.attributes('disabled')).toBeUndefined()
     wrapper.unmount()
   })
 

@@ -24,6 +24,15 @@ const loading = ref(false), busy = ref(''), error = ref('')
 const pending = ref<{ kind: 'snapshot' | 'backup'; action: 'restore' | 'delete' | 'download'; row: Snapshot | Backup } | null>(null)
 const stopped = computed(() => props.instance.status === 'stopped')
 const locked = computed(() => !!busy.value || !!props.disabled || !!props.instance.busy_operation)
+
+/**
+ * The Master persists recovery points as `available` (see service/recovery.go
+ * and service/backup.go); older frontend fixtures used `ready`. Accept both so
+ * a usable archive is never rendered disabled behind a frontend-only value.
+ */
+function usable(status: string) {
+  return status === 'available' || status === 'ready'
+}
 function incompatible(kind: 'snapshot' | 'backup', row: Snapshot | Backup) {
   return kind === 'snapshot' ? !!row.agent_id && row.agent_id !== props.instance.agent_id : 'driver' in row && row.driver !== props.instance.driver
 }
@@ -84,7 +93,7 @@ async function confirm() {
     return
   }
   if (item.action === 'restore' && !stopped.value) { error.value = '请先关机再恢复。'; return }
-  if (item.action === 'restore' && (item.row.status !== 'ready' || incompatible(item.kind, item.row))) { error.value = '恢复点未就绪或来源节点 / 驱动不兼容。'; return }
+  if (item.action === 'restore' && (!usable(item.row.status) || incompatible(item.kind, item.row))) { error.value = '恢复点未就绪或来源节点 / 驱动不兼容。'; return }
   await run(confirmTitle.value, () => item.kind === 'snapshot'
     ? item.action === 'restore' ? recoveryApi.restoreSnapshot(props.instance.id, item.row.id) : recoveryApi.deleteSnapshot(props.instance.id, item.row.id)
     : item.action === 'restore' ? recoveryApi.restoreBackup(props.instance.id, item.row.id) : recoveryApi.deleteBackup(props.instance.id, item.row.id))
@@ -109,7 +118,7 @@ onBeforeUnmount(() => { request++ })
         </form>
         <div class="overflow-x-auto rounded-md border">
           <table class="w-full text-sm"><thead class="border-b bg-muted/30"><tr><th class="p-3 text-left">名称 / 备注</th><th class="p-3 text-left">大小</th><th class="p-3 text-left">状态</th><th class="p-3 text-left">创建时间</th><th class="p-3 text-right">操作</th></tr></thead>
-            <tbody><tr v-for="row in kind === 'snapshot' ? snapshots : backups" :key="row.id" class="border-b last:border-0"><td class="p-3"><p class="font-medium">{{ row.name }}</p><p class="text-xs text-muted-foreground">{{ row.remark }}</p><p class="mt-1 text-xs text-muted-foreground">来源节点 #{{ row.agent_id || '未知' }}<template v-if="'driver' in row"> · {{ (row as Backup).driver }}<span v-if="(row as Backup).format"> · {{ (row as Backup).format }}</span></template></p><p v-if="'checksum' in row && row.checksum" class="max-w-xs break-all font-mono text-xs text-muted-foreground">SHA-256 {{ row.checksum }}</p><p v-if="row.error" class="text-xs text-destructive">{{ row.error }}</p><p v-if="incompatible(kind, row)" class="text-xs text-amber-600">来源节点 / 驱动不兼容，不能恢复</p></td><td class="p-3 whitespace-nowrap">{{ row.size_bytes > 0 ? formatBytes(row.size_bytes) : '大小未知' }}</td><td class="p-3"><Badge variant="outline">{{ row.status }}</Badge></td><td class="p-3 whitespace-nowrap text-muted-foreground">{{ formatDateTime(row.created_at) }}</td><td class="p-3"><div class="flex justify-end gap-2"><Button v-if="kind === 'backup'" size="sm" variant="outline" :disabled="locked || row.status !== 'ready'" @click="pending = { kind, action: 'download', row }">下载</Button><Button size="sm" variant="outline" :disabled="locked || !stopped || row.status !== 'ready' || incompatible(kind, row)" @click="pending = { kind, action: 'restore', row }">恢复</Button><Button size="sm" variant="destructive" :disabled="locked" @click="pending = { kind, action: 'delete', row }">删除</Button></div></td></tr>
+            <tbody><tr v-for="row in kind === 'snapshot' ? snapshots : backups" :key="row.id" class="border-b last:border-0"><td class="p-3"><p class="font-medium">{{ row.name }}</p><p class="text-xs text-muted-foreground">{{ row.remark }}</p><p class="mt-1 text-xs text-muted-foreground">来源节点 #{{ row.agent_id || '未知' }}<template v-if="'driver' in row"> · {{ (row as Backup).driver }}<span v-if="(row as Backup).format"> · {{ (row as Backup).format }}</span></template></p><p v-if="'checksum' in row && row.checksum" class="max-w-xs break-all font-mono text-xs text-muted-foreground">SHA-256 {{ row.checksum }}</p><p v-if="row.error" class="text-xs text-destructive">{{ row.error }}</p><p v-if="incompatible(kind, row)" class="text-xs text-amber-600">来源节点 / 驱动不兼容，不能恢复</p></td><td class="p-3 whitespace-nowrap">{{ row.size_bytes > 0 ? formatBytes(row.size_bytes) : '大小未知' }}</td><td class="p-3"><Badge variant="outline">{{ row.status }}</Badge></td><td class="p-3 whitespace-nowrap text-muted-foreground">{{ formatDateTime(row.created_at) }}</td><td class="p-3"><div class="flex justify-end gap-2"><Button v-if="kind === 'backup'" size="sm" variant="outline" :disabled="locked || !usable(row.status)" @click="pending = { kind, action: 'download', row }">下载</Button><Button size="sm" variant="outline" :disabled="locked || !stopped || !usable(row.status) || incompatible(kind, row)" @click="pending = { kind, action: 'restore', row }">恢复</Button><Button size="sm" variant="destructive" :disabled="locked" @click="pending = { kind, action: 'delete', row }">删除</Button></div></td></tr>
               <tr v-if="!(kind === 'snapshot' ? snapshots : backups).length"><td colspan="5" class="p-8 text-center text-muted-foreground">{{ loading ? '正在读取恢复点…' : `暂无${kind === 'snapshot' ? '快照' : '备份'}，创建后将在此显示。` }}</td></tr>
             </tbody></table>
         </div>

@@ -55,7 +55,7 @@ export const authApi = {
 }
 
 export const virtualisApi = {
-  /** 新增 NAT 端口映射；host_port 传 0 由主控自动分配。 */
+  /** Create a NAT port mapping; host_port 0 lets the master auto-assign. */
   async createNATMapping(id: number, payload: { protocol: string; host_port?: number; guest_port: number; remark?: string }) {
     const { data } = await http.post<NATMapping>(`/instances/${id}/nat`, payload)
     return data
@@ -63,7 +63,7 @@ export const virtualisApi = {
   async deleteNATMapping(id: number, mappingId: number) {
     await http.delete(`/instances/${id}/nat/${mappingId}`)
   },
-  /** 设置 root 密码；实例运行中会异步注入（QEMU 依赖 guest agent）。 */
+  /** Set the root password; running instances inject it asynchronously (QEMU relies on the guest agent). */
   async setPassword(id: number, password: string) {
     const { data } = await http.post<VirtualisInstance>(`/instances/${id}/password`, { password })
     return data
@@ -231,7 +231,7 @@ export const securityGroupApi = {
 }
 
 export const agentApi = {
-  /** 被控主机网卡清单；独立 IP 模式的挂载接口与可用性判断数据源。 */
+  /** Agent host interface list; data source for dedicated-IP attach targets and readiness. */
   async hostNetwork(id: number) {
     const { data } = await http.get<HostNetworkSummary>(`/admin/agents/${id}/network`)
     return data
