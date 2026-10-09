@@ -5,5 +5,5 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   resolve: { alias: { '@': path.resolve(import.meta.dirname, 'src') } },
-  test: { environment: 'jsdom', include: ['tests/**/*.test.ts'], restoreMocks: true },
+  test: { environment: 'jsdom', include: ['tests/**/*.test.ts'], restoreMocks: true, testTimeout: 30000 },
 })
