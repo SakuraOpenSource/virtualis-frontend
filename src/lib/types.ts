@@ -106,7 +106,7 @@ export interface InstanceOperationLog {
 
 export interface InstanceSpec {
    cpu: number
-   /** CPU 毫核配额（500 表示 0.5 核），0/未填表示未设置（整核模式）。 */
+   /** CPU milli-core quota (500 means 0.5 vCPU); 0/absent means unset (whole-core mode). */
    cpu_milli?: number
    memory_mb: number
    disk_gb: number
@@ -122,11 +122,11 @@ export interface NetworkConfig {
   gateway?: string
   dns?: string[]
   bandwidth_mbps?: number
-  /** 月流量配额（GB）；0 或缺省表示不限流量。 */
+  /** Monthly traffic quota in GB; 0 or absent means unlimited. */
   traffic_gb?: number
 }
 
-/** NAT 端口转发：被控主机 host_port → 实例 guest_port。 */
+/** NAT port forwarding: agent host_port -> instance guest_port. */
 export interface NATMapping {
   id?: number
   instance_id?: number
@@ -180,9 +180,9 @@ export interface InstanceMetrics {
   network_tx_bytes: number
   bandwidth_rx_bps: number
   bandwidth_tx_bps: number
-  /** 本计费周期累计流量（rx+tx 字节）；被控节点不支持计量时缺省。 */
+  /** Accumulated traffic this billing cycle (rx+tx bytes); absent when the agent cannot meter. */
   traffic_used_bytes?: number
-  /** 流量配额是否已超限（被控节点侧断网执法状态）。 */
+  /** Whether the traffic quota is exceeded (agent-side network enforcement state). */
   traffic_quota_exceeded?: boolean
   collected_at: string
 }
@@ -273,7 +273,7 @@ export interface IPPoolEntry { id: number; ip: string; gateway: string; prefix: 
 export interface IPPoolInput { gateway: string; prefix: number; dns: string[]; interface: string; note: string }
 export interface IPPoolOverview extends IPPoolInput { agent_id: number; agent_name: string; total: number; free: number; assigned: number; disabled: number; entries: IPPoolEntry[] }
 
-/** 被控主机网卡，供独立 IP 模式选择挂载目标。 */
+/** Agent host interface, used to pick a dedicated-IP attach target. */
 export interface HostInterface {
   name: string
   kind: string
@@ -283,7 +283,7 @@ export interface HostInterface {
   ipv6?: string[]
 }
 
-/** 被控主机网络汇总；独立 IP 就绪状态依赖可用接口与空闲 IP 池，不依赖主机地址数量。 */
+/** Agent host network summary; dedicated-IP readiness depends on usable interfaces and a free IP pool, not on host address count. */
 export interface HostNetworkSummary {
   interfaces: HostInterface[]
   ipv4_count: number
@@ -329,7 +329,8 @@ export interface APIKey {
 
 export interface APIKeyList {
   items: APIKey[] | null
-  scopes: APIScope[]
+  /** Catalog of scopes the backend accepts; absent while list stays read-only. */
+  scopes?: APIScope[] | null
 }
 
 export interface APIKeyCreated {
@@ -337,4 +338,13 @@ export interface APIKeyCreated {
   secret: string
 }
 
-export interface APIKeyInput { name?: string }
+/**
+ * Backend create contract: requested scopes and optional expiry are honored
+ * (PLG-F03). Fields stay optional so a legacy backend that ignores them still
+ * round-trips; the UI degrades gracefully when they are absent.
+ */
+export interface APIKeyInput {
+  name?: string
+  scopes?: APIScope[]
+  expires_in_days?: number
+}
